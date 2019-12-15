@@ -624,7 +624,7 @@ websocket_close(State = #state{socket=Socket,
         {ok, HandlerState1} ->
             catch Transport:close(Socket),
             loop(State#state{closed = true}, HandlerState1, undefined);
-        {stop, HandlerState1} ->
+        {_Cmds, HandlerState1} ->
             terminate(State, HandlerState1, Reason)
     end.
 
