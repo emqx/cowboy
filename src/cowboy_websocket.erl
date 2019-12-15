@@ -35,7 +35,7 @@
 	| {active, boolean()}
 	| {deflate, boolean()}
 	| {set_options, map()}
-	| {shutdown_reason, any()}
+	| {shutdown, Reason :: term()}
 ].
 -export_type([commands/0]).
 
@@ -97,6 +97,7 @@
 	deflate = true :: boolean(),
 	extensions = #{} :: map(),
 	req = #{} :: map(),
+	closed = false :: boolean(),
 	shutdown_reason = normal :: any()
 }).
 
@@ -348,12 +349,12 @@ loop(State=#state{parent=Parent, socket=Socket, messages=Messages,
 	receive
 		%% Socket messages. (HTTP/1.1)
 		{OK, Socket, Data} when OK =:= element(1, Messages) ->
-			State2 = loop_timeout(State),
-			parse(State2, HandlerState, ParseState, Data);
+            State2 = loop_timeout(State),
+            parse(State2, HandlerState, ParseState, Data);
 		{Closed, Socket} when Closed =:= element(2, Messages) ->
-			terminate(State, HandlerState, {error, closed});
+			websocket_close(State, HandlerState, {error, sock_closed});
 		{Error, Socket, Reason} when Error =:= element(3, Messages) ->
-			terminate(State, HandlerState, {error, Reason});
+            websocket_close(State, HandlerState, {error, {sock_error, Reason}});
 		%% Body reading messages. (HTTP/2)
 		{request_body, _Ref, nofin, Data} ->
 			State2 = loop_timeout(State),
@@ -386,6 +387,10 @@ loop(State=#state{parent=Parent, socket=Socket, messages=Messages,
 			handler_call(State, HandlerState, ParseState,
 				websocket_info, Message, fun before_loop/3)
 	end.
+
+%% Ignore all the input data when the conn is in 'closed' state.
+parse(State, HandlerState, undefined, _Data) ->
+    loop(State, HandlerState, undefined);
 
 parse(State, HandlerState, PS=#ps_header{buffer=Buffer}, Data) ->
 	parse_header(State, HandlerState, PS#ps_header{
@@ -496,20 +501,20 @@ handler_call(State=#state{handler=Handler}, HandlerState,
 			case websocket_send(Payload, State) of
 				ok ->
 					NextState(State, HandlerState2, ParseState);
-				stop ->
-					terminate(State, HandlerState2, stop);
+				close ->
+					websocket_close(State, HandlerState2, {error, close});
 				Error = {error, _} ->
-					terminate(State, HandlerState2, Error)
+					websocket_close(State, HandlerState2, Error)
 			end;
 		{reply, Payload, HandlerState2, hibernate} ->
 			case websocket_send(Payload, State) of
 				ok ->
 					NextState(State#state{hibernate=true},
 						HandlerState2, ParseState);
-				stop ->
-					terminate(State, HandlerState2, stop);
+				close ->
+                    websocket_close(State, HandlerState2, {error, close});
 				Error = {error, _} ->
-					terminate(State, HandlerState2, Error)
+					websocket_close(State, HandlerState2, Error)
 			end;
 		{stop, HandlerState2} ->
 			websocket_close(State, HandlerState2, stop)
@@ -525,10 +530,12 @@ handler_call_result(State0, HandlerState, ParseState, NextState, Commands) ->
 	case commands(Commands, State0, []) of
 		{ok, State} ->
 			NextState(State, HandlerState, ParseState);
+		{close, State} ->
+            websocket_close(State, HandlerState, {error, close});
 		{stop, State} ->
-			terminate(State, HandlerState, stop);
+            websocket_close(State, HandlerState, stop);
 		{Error = {error, _}, State} ->
-			terminate(State, HandlerState, Error)
+            websocket_close(State, HandlerState, Error)
 	end.
 
 commands([], State, []) ->
@@ -548,14 +555,15 @@ commands([{set_options, SetOpts}|Tail], State0=#state{opts=Opts}, Data) ->
 			State0
 	end,
 	commands(Tail, State, Data);
-commands([{shutdown_reason, ShutdownReason}|Tail], State, Data) ->
-	commands(Tail, State#state{shutdown_reason=ShutdownReason}, Data);
+commands([{shutdown, Reason}|_Tail], State, Data) ->
+    _ = transport_send(State, fin, lists:reverse(Data)),
+    {stop, State#state{shutdown_reason=Reason}};
 commands([Frame|Tail], State, Data0) ->
 	Data = [frame(Frame, State)|Data0],
 	case is_close_frame(Frame) of
 		true ->
 			_ = transport_send(State, fin, lists:reverse(Data)),
-			{stop, State};
+			{close, State};
 		false ->
 			commands(Tail, State, Data)
 	end.
@@ -566,7 +574,7 @@ transport_send(#state{socket=Stream={Pid, _}, transport=undefined}, IsFin, Data)
 transport_send(#state{socket=Socket, transport=Transport}, _, Data) ->
 	Transport:send(Socket, Data).
 
--spec websocket_send(cow_ws:frame(), #state{}) -> ok | stop | {error, atom()}.
+-spec websocket_send(cow_ws:frame(), #state{}) -> ok | close | {error, atom()}.
 websocket_send(Frames, State) when is_list(Frames) ->
 	websocket_send_many(Frames, State, []);
 websocket_send(Frame, State) ->
@@ -574,7 +582,7 @@ websocket_send(Frame, State) ->
 	case is_close_frame(Frame) of
 		true ->
 			_ = transport_send(State, fin, Data),
-			stop;
+			close;
 		false ->
 			transport_send(State, nofin, Data)
 	end.
@@ -586,7 +594,7 @@ websocket_send_many([Frame|Tail], State, Acc0) ->
 	case is_close_frame(Frame) of
 		true ->
 			_ = transport_send(State, fin, lists:reverse(Acc)),
-			stop;
+			close;
 		false ->
 			websocket_send_many(Tail, State, Acc)
 	end.
@@ -597,13 +605,40 @@ is_close_frame({close, _, _}) -> true;
 is_close_frame(_) -> false.
 
 -spec websocket_close(#state{}, any(), terminate_reason()) -> no_return().
-websocket_close(State, HandlerState, Reason) ->
-	websocket_send_close(State, Reason),
-	terminate(State, HandlerState, Reason).
 
+websocket_close(State, HandlerState, stop) ->
+    websocket_send_close(State, stop),
+    terminate(State, HandlerState, stop);
+
+websocket_close(State = #state{closed=true}, HandlerState, _Reason) ->
+    loop(State, HandlerState, undefined);
+
+websocket_close(State = #state{socket=Socket,
+                               transport=Transport,
+                               handler=Handler}, HandlerState, Reason) ->
+	ok = websocket_send_close(State, Reason),
+    case erlang:function_exported(Handler, websocket_close, 2)
+         andalso Handler:websocket_close(Reason, HandlerState) of
+        false ->
+            terminate(State, HandlerState, Reason);
+        {ok, HandlerState1} ->
+            catch Transport:close(Socket),
+            loop(State#state{closed = true}, HandlerState1, undefined);
+        {stop, HandlerState1} ->
+            terminate(State, HandlerState1, Reason)
+    end.
+
+websocket_send_close(_State, {error, Closed})
+  when Closed == tcp_closed; Closed == ssl_closed ->
+    ok;
+websocket_send_close(_State, {error, {Error, _Reason}})
+  when Error == tcp_error; Error == ssl_error ->
+    ok;
 websocket_send_close(State, Reason) ->
 	_ = case Reason of
 		Normal when Normal =:= stop; Normal =:= timeout ->
+			transport_send(State, fin, frame({close, 1000, <<>>}, State));
+        close ->
 			transport_send(State, fin, frame({close, 1000, <<>>}, State));
 		{error, badframe} ->
 			transport_send(State, fin, frame({close, 1002, <<>>}, State));
