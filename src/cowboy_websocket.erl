@@ -628,11 +628,9 @@ websocket_close(State = #state{socket=Socket,
             terminate(State, HandlerState1, Reason)
     end.
 
-websocket_send_close(_State, {error, Closed})
-  when Closed == tcp_closed; Closed == ssl_closed ->
+websocket_send_close(_State, {error, sock_closed}) ->
     ok;
-websocket_send_close(_State, {error, {Error, _Reason}})
-  when Error == tcp_error; Error == ssl_error ->
+websocket_send_close(_State, {error, {sock_error, _Reason}}) ->
     ok;
 websocket_send_close(State, Reason) ->
 	_ = case Reason of
