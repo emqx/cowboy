@@ -638,6 +638,8 @@ websocket_send_close(State, Reason) ->
 			transport_send(State, fin, frame({close, 1000, <<>>}, State));
         close ->
 			transport_send(State, fin, frame({close, 1000, <<>>}, State));
+        {error, close} ->
+			transport_send(State, fin, frame({close, 1000, <<>>}, State));
 		{error, badframe} ->
 			transport_send(State, fin, frame({close, 1002, <<>>}, State));
 		{error, badencoding} ->
