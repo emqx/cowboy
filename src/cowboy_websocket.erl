@@ -663,7 +663,14 @@ frame(Frame, #state{extensions=Extensions}) ->
 
 -spec terminate(#state{}, any(), terminate_reason()) -> no_return().
 terminate(State=#state{shutdown_reason=Shutdown}, HandlerState, Reason) ->
-	handler_terminate(State, HandlerState, Reason),
+    case Shutdown of
+        undefined ->
+           handler_terminate(State, HandlerState, Reason);
+        normal ->
+           handler_terminate(State, HandlerState, normal);
+        _ ->
+           handler_terminate(State, HandlerState, {shutdown, Shutdown})
+    end,
 	case Shutdown of
 		normal -> exit(normal);
 		_ -> exit({shutdown, Shutdown})
