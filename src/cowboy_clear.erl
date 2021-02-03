@@ -33,15 +33,18 @@ start_link(Ref, Transport, Opts) ->
 
 -spec connection_process(pid(), ranch:ref(), module(), cowboy:opts()) -> ok.
 connection_process(Parent, Ref, Transport, Opts) ->
-	ProxyInfo = case maps:get(proxy_header, Opts, false) of
-		true ->
-			{ok, ProxyInfo0} = ranch:recv_proxy_header(Ref, 1000),
-			ProxyInfo0;
-		false ->
+    ProxyInfo = case maps:get(proxy_header, Opts, false) of
+        true ->
+            case ranch:recv_proxy_header(Ref, 1000) of
+                {ok, ProxyInfo0} -> ProxyInfo0;
+                {error, Reason} -> exit({shutdown, {recv_proxy_header, Reason}});
+                {error, protocol_error, Reason} -> exit({recv_proxy_header, Reason})
+            end;
+        false ->
 			undefined
-	end,
-	{ok, Socket} = ranch:handshake(Ref),
-	init(Parent, Ref, Socket, Transport, ProxyInfo, Opts, cowboy_http).
+    end,
+    {ok, Socket} = ranch:handshake(Ref),
+    init(Parent, Ref, Socket, Transport, ProxyInfo, Opts, cowboy_http).
 
 init(Parent, Ref, Socket, Transport, ProxyInfo, Opts, Protocol) ->
 	_ = case maps:get(connection_type, Opts, supervisor) of
