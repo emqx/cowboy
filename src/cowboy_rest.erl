@@ -812,8 +812,8 @@ variances(Req, State=#state{content_types_p=CTP,
 						<<"vary">>, [H|Variances5], Req2),
 					resource_exists(Req3, State2)
 			end
-	catch Class:Reason ->
-		error_terminate(Req, State, Class, Reason)
+	catch Class:Reason:ST ->
+		error_terminate(Req, State, Class, Reason, ST)
 	end.
 
 variances(Req, State, Variances) ->
@@ -850,8 +850,8 @@ if_match(Req, State, EtagsList) ->
 				%% Etag may be `undefined' which cannot be a member.
 				false -> precondition_failed(Req2, State2)
 			end
-	catch Class:Reason ->
-		error_terminate(Req, State, Class, Reason)
+	catch Class:Reason:ST ->
+		error_terminate(Req, State, Class, Reason, ST)
 	end.
 
 if_match_must_not_exist(Req, State) ->
@@ -878,8 +878,8 @@ if_unmodified_since(Req, State, IfUnmodifiedSince) ->
 				true -> precondition_failed(Req2, State2);
 				false -> if_none_match_exists(Req2, State2)
 			end
-	catch Class:Reason ->
-		error_terminate(Req, State, Class, Reason)
+	catch Class:Reason:ST ->
+		error_terminate(Req, State, Class, Reason, ST)
 	end.
 
 if_none_match_exists(Req, State) ->
@@ -904,8 +904,8 @@ if_none_match(Req, State, EtagsList) ->
 						false -> method(Req2, State2)
 					end
 			end
-	catch Class:Reason ->
-		error_terminate(Req, State, Class, Reason)
+	catch Class:Reason:ST ->
+		error_terminate(Req, State, Class, Reason, ST)
 	end.
 
 %% Weak Etag comparison: only check the opaque tag.
@@ -947,8 +947,8 @@ if_modified_since(Req, State, IfModifiedSince) ->
 				true -> method(Req2, State2);
 				false -> not_modified(Req2, State2)
 			end
-	catch Class:Reason ->
-		error_terminate(Req, State, Class, Reason)
+	catch Class:Reason:ST ->
+		error_terminate(Req, State, Class, Reason, ST)
 	end.
 
 not_modified(Req, State) ->
@@ -958,11 +958,11 @@ not_modified(Req, State) ->
 			try set_resp_expires(Req3, State2) of
 				{Req4, State3} ->
 					respond(Req4, State3, 304)
-			catch Class:Reason ->
-				error_terminate(Req, State2, Class, Reason)
+			catch Class:Reason:ST ->
+				error_terminate(Req, State2, Class, Reason, ST)
 			end
-	catch Class:Reason ->
-		error_terminate(Req, State, Class, Reason)
+	catch Class:Reason:ST ->
+		error_terminate(Req, State, Class, Reason, ST)
 	end.
 
 precondition_failed(Req, State) ->
@@ -1115,8 +1115,8 @@ process_content_type(Req, State=#state{method=Method, exists=Exists}, Fun) ->
 				Exists -> respond(Req3, State2, 303);
 				true -> respond(Req3, State2, 201)
 			end
-	end catch Class:Reason = {case_clause, no_call} ->
-		error_terminate(Req, State, Class, Reason)
+	end catch Class:Reason = {case_clause, no_call}:ST ->
+		error_terminate(Req, State, Class, Reason, ST)
 	end.
 
 %% If PUT was used then the resource has been created at the current URL.
@@ -1142,8 +1142,8 @@ set_resp_body_etag(Req, State) ->
 	try set_resp_etag(Req, State) of
 		{Req2, State2} ->
 			set_resp_body_last_modified(Req2, State2)
-	catch Class:Reason ->
-		error_terminate(Req, State, Class, Reason)
+	catch Class:Reason:ST ->
+		error_terminate(Req, State, Class, Reason, ST)
 	end.
 
 %% Set the Last-Modified header if any for the response provided.
@@ -1159,8 +1159,8 @@ set_resp_body_last_modified(Req, State) ->
 						<<"last-modified">>, LastModifiedBin, Req2),
 					set_resp_body_expires(Req3, State2)
 			end
-	catch Class:Reason ->
-		error_terminate(Req, State, Class, Reason)
+	catch Class:Reason:ST ->
+		error_terminate(Req, State, Class, Reason, ST)
 	end.
 
 %% Set the Expires header if any for the response provided.
@@ -1168,8 +1168,8 @@ set_resp_body_expires(Req, State) ->
 	try set_resp_expires(Req, State) of
 		{Req2, State2} ->
 			if_range(Req2, State2)
-	catch Class:Reason ->
-		error_terminate(Req, State, Class, Reason)
+	catch Class:Reason:ST ->
+		error_terminate(Req, State, Class, Reason, ST)
 	end.
 
 %% When both the if-range and range headers are set, we perform
@@ -1254,9 +1254,9 @@ set_ranged_body_auto(Req, State=#state{handler=Handler, content_type_a={_, Callb
 			switch_handler(Switch, Req2, State2);
 		{Body, Req2, State2} ->
 			maybe_set_ranged_body_auto(Req2, State2, Body)
-	end catch Class:{case_clause, no_call} ->
+	end catch Class:{case_clause, no_call}:ST ->
 		error_terminate(Req, State, Class, {error, {missing_callback, {Handler, Callback, 2}},
-			'A callback specified in content_types_provided/2 is not exported.'})
+			'A callback specified in content_types_provided/2 is not exported.'}, ST)
 	end.
 
 maybe_set_ranged_body_auto(Req=#{range := {_, Ranges}}, State, Body) ->
@@ -1379,9 +1379,9 @@ set_ranged_body_callback(Req, State=#state{handler=Handler}, Callback) ->
 				true -> send_multipart_ranged_body(Req2, State2, Ranges);
 				false -> set_multipart_ranged_body(Req2, State2, Ranges)
 			end
-	end catch Class:{case_clause, no_call} ->
+	end catch Class:{case_clause, no_call}:ST ->
 		error_terminate(Req, State, Class, {error, {missing_callback, {Handler, Callback, 2}},
-			'A callback specified in ranges_provided/2 is not exported.'})
+			'A callback specified in ranges_provided/2 is not exported.'}, ST)
 	end.
 
 set_one_ranged_body(Req0, State, OneRange) ->
@@ -1471,9 +1471,9 @@ set_resp_body(Req, State=#state{handler=Handler, content_type_a={_, Callback}}) 
 		{Body, Req2, State2} ->
 			Req3 = cowboy_req:set_resp_body(Body, Req2),
 			multiple_choices(Req3, State2)
-	end catch Class:{case_clause, no_call} ->
+	end catch Class:{case_clause, no_call}:ST ->
 		error_terminate(Req, State, Class, {error, {missing_callback, {Handler, Callback, 2}},
-			'A callback specified in content_types_provided/2 is not exported.'})
+			'A callback specified in content_types_provided/2 is not exported.'}, ST)
 	end.
 
 multiple_choices(Req, State) ->
@@ -1578,8 +1578,8 @@ call(Req0, State=#state{handler=Handler,
 					no_call;
 				{Result, Req, HandlerState} ->
 					{Result, Req, State#state{handler_state=HandlerState}}
-			catch Class:Reason ->
-				error_terminate(Req0, State, Class, Reason)
+			catch Class:Reason:ST ->
+				error_terminate(Req0, State, Class, Reason, ST)
 			end;
 		false ->
 			no_call
@@ -1620,9 +1620,9 @@ switch_handler({switch_handler, Mod}, Req, #state{handler_state=HandlerState}) -
 switch_handler({switch_handler, Mod, Opts}, Req, #state{handler_state=HandlerState}) ->
 	{Mod, Req, HandlerState, Opts}.
 
--spec error_terminate(cowboy_req:req(), #state{}, atom(), any()) -> no_return().
-error_terminate(Req, #state{handler=Handler, handler_state=HandlerState}, Class, Reason) ->
-	StackTrace = erlang:get_stacktrace(),
+-spec error_terminate(cowboy_req:req(), #state{}, atom(), any(), any()) -> no_return().
+error_terminate(Req, #state{handler=Handler, handler_state=HandlerState}, Class,
+		Reason, StackTrace) ->
 	cowboy_handler:terminate({crash, Class, Reason}, Req, HandlerState, Handler),
 	erlang:raise(Class, Reason, StackTrace).
 

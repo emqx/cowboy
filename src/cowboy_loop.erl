@@ -81,10 +81,9 @@ call(Req0, Env, Handler, HandlerState0, Message) ->
 			suspend(Req, Env, Handler, HandlerState);
 		{stop, Req, HandlerState} ->
 			terminate(Req, Env, Handler, HandlerState, stop)
-	catch Class:Reason ->
-		StackTrace = erlang:get_stacktrace(),
+	catch Class:Reason:ST ->
 		cowboy_handler:terminate({crash, Class, Reason}, Req0, HandlerState0, Handler),
-		erlang:raise(Class, Reason, StackTrace)
+		erlang:raise(Class, Reason, ST)
 	end.
 
 suspend(Req, Env, Handler, HandlerState) ->

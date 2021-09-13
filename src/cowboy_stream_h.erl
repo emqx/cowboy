@@ -301,17 +301,15 @@ request_process(Req, Env, Middlewares) ->
 	try
 		execute(Req, Env, Middlewares)
 	catch
-		exit:Reason ->
-			Stacktrace = erlang:get_stacktrace(),
-			erlang:raise(exit, {Reason, Stacktrace}, Stacktrace);
+		exit:Reason:ST ->
+			erlang:raise(exit, {Reason, ST}, ST);
 		%% OTP 19 does not propagate any exception stacktraces,
 		%% we therefore add it for every class of exception.
-		_:Reason when OTP =:= "19" ->
-			Stacktrace = erlang:get_stacktrace(),
-			erlang:raise(exit, {Reason, Stacktrace}, Stacktrace);
+		_:Reason:ST when OTP =:= "19" ->
+			erlang:raise(exit, {Reason, ST}, ST);
 		%% @todo I don't think this clause is necessary.
-		Class:Reason ->
-			erlang:raise(Class, Reason, erlang:get_stacktrace())
+		Class:Reason:ST ->
+			erlang:raise(Class, Reason, ST)
 	end.
 
 execute(_, _, []) ->
