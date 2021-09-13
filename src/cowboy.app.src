@@ -1,6 +1,6 @@
 {application, cowboy,
  [{description, "Small, fast, modern HTTP server."},
-  {vsn, "2.8.2"},
+  {vsn, "git"},
   {modules, []},
   {registered, [cowboy_sup,cowboy_clock]},
   {applications, [kernel,stdlib,crypto,cowlib,ranch]},

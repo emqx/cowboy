@@ -1,12 +1,32 @@
 %% -*-: erlang -*-
 
-{VSN,
+{"2.8.3",
   [
+    {"2.8.2", [
+      {load_module, cowboy_handler, brutal_purge, soft_purge, []},
+      {load_module, cowboy_http, brutal_purge, soft_purge, []},
+      {load_module, cowboy_http2, brutal_purge, soft_purge, []},
+      {load_module, cowboy_loop, brutal_purge, soft_purge, []},
+      {load_module, cowboy_req, brutal_purge, soft_purge, []},
+      {load_module, cowboy_rest, brutal_purge, soft_purge, []},
+      {load_module, cowboy_stream_h, brutal_purge, soft_purge, []},
+      {load_module, cowboy_websocket, brutal_purge, soft_purge, []}
+    ]},
     {"2.8.1", [
       {load_module, cowboy_clear, brutal_purge, soft_purge, []}
     ]}
   ],
   [
+    {"2.8.2", [
+      {load_module, cowboy_handler, brutal_purge, soft_purge, []},
+      {load_module, cowboy_http, brutal_purge, soft_purge, []},
+      {load_module, cowboy_http2, brutal_purge, soft_purge, []},
+      {load_module, cowboy_loop, brutal_purge, soft_purge, []},
+      {load_module, cowboy_req, brutal_purge, soft_purge, []},
+      {load_module, cowboy_rest, brutal_purge, soft_purge, []},
+      {load_module, cowboy_stream_h, brutal_purge, soft_purge, []},
+      {load_module, cowboy_websocket, brutal_purge, soft_purge, []}
+    ]},
     {"2.8.1", [
       {load_module, cowboy_clear, brutal_purge, soft_purge, []}
     ]}
