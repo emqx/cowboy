@@ -47,7 +47,6 @@ execute(Req, Env=#{handler := Handler, handler_opts := HandlerOpts}) ->
 		{Mod, Req2, State, Opts} ->
 			Mod:upgrade(Req2, Env, Handler, State, Opts)
 	catch Class:Reason:ST ->
-		logger:error("cowboy execute Handler:init/2 crashed with: ~p", [{Class, Reason, ST}]),
 		terminate({crash, Class, Reason}, Req, HandlerOpts, Handler),
 		erlang:raise(Class, Reason, ST)
 	end.
