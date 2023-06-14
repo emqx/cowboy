@@ -1,6 +1,6 @@
 %% -*-: erlang -*-
 
-{"2.9.1",
+{"2.9.2",
   [{"2.9.0",[
       {load_module,cowboy_websocket,brutal_purge,soft_purge,[]}
     ]},
