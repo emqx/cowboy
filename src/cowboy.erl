@@ -53,13 +53,22 @@ start_clear(Ref, TransOpts0, ProtoOpts0) ->
 start_tls(Ref, TransOpts0, ProtoOpts0) ->
 	TransOpts1 = ranch:normalize_opts(TransOpts0),
 	SocketOpts = maps:get(socket_opts, TransOpts1, []),
-	TransOpts2 = TransOpts1#{socket_opts => [
-		{next_protocols_advertised, [<<"h2">>, <<"http/1.1">>]},
-		{alpn_preferred_protocols, [<<"h2">>, <<"http/1.1">>]}
-	|SocketOpts]},
+	TransOpts2 = TransOpts1#{socket_opts => append_preferred_protocols(SocketOpts)},
 	{TransOpts, ConnectionType} = ensure_connection_type(TransOpts2),
 	ProtoOpts = ProtoOpts0#{connection_type => ConnectionType},
 	ranch:start_listener(Ref, ranch_ssl, TransOpts, cowboy_tls, ProtoOpts).
+
+append_preferred_protocols(SocketOpts) ->
+    Supported = ['tlsv1', 'tlsv1.1', 'tlsv1.2'],
+    Versions = proplists:get_value(versions, SocketOpts, []),
+    SocketOpts1 =
+        case lists:any(fun(Ver) -> lists:member(Ver, Supported) end, Versions) of
+            true ->
+                [{next_protocols_advertised, [<<"h2">>, <<"http/1.1">>]} | SocketOpts];
+            false ->
+                SocketOpts
+        end,
+    [{alpn_preferred_protocols, [<<"h2">>, <<"http/1.1">>]} | SocketOpts1].
 
 ensure_connection_type(TransOpts=#{connection_type := ConnectionType}) ->
 	{TransOpts, ConnectionType};
