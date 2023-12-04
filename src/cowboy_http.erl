@@ -1252,12 +1252,10 @@ stream_terminate(State0=#state{opts=Opts, in_streamid=InStreamID, in_state=InSta
 	%% Remove the stream from the state and reset the overriden options.
 	{value, #stream{state=StreamState}, Streams}
 		= lists:keytake(StreamID, #stream.id, Streams1),
-	State2 = State1#state{streams=Streams, overriden_opts=#{}, flow=infinity},
 	%% Stop the stream.
-	stream_call_terminate(StreamID, Reason, StreamState, State2),
+	stream_call_terminate(StreamID, Reason, StreamState, State1),
 	Children = cowboy_children:shutdown(Children0, StreamID),
-	%% We reset the timeout if there are no active streams anymore.
-	State = set_timeout(State2#state{streams=Streams, children=Children}, request_timeout),
+	State = State1#state{overriden_opts=#{}, streams=Streams, children=Children},
 	%% We want to drop the connection if the body was not read fully
 	%% and we don't know its length or more remains to be read than
 	%% configuration allows.
