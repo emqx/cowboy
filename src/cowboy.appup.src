@@ -1,7 +1,11 @@
 %% -*-: erlang -*-
 
-{"2.9.2",
-  [{"2.9.0",[
+{"2.9.3",
+  [{"2.9.2",[
+      {load_module,cowboy_http,brutal_purge,soft_purge,[]}
+    ]},
+   {"2.9.0",[
+      {load_module,cowboy_http,brutal_purge,soft_purge,[]},
       {load_module,cowboy_websocket,brutal_purge,soft_purge,[]}
     ]},
    {<<"2\\.8\\..*">>,[
@@ -16,7 +20,11 @@
     ]},
    {<<".*">>, []}
   ],
-  [{"2.9.0",[
+  [{"2.9.2",[
+      {load_module,cowboy_http,brutal_purge,soft_purge,[]}
+    ]},
+   {"2.9.0",[
+      {load_module,cowboy_http,brutal_purge,soft_purge,[]},
       {load_module,cowboy_websocket,brutal_purge,soft_purge,[]}
     ]},
    {<<"2\\.8\\..*">>,[
