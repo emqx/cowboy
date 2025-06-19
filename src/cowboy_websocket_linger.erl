@@ -91,9 +91,7 @@
 -record(state, {
 	parent :: undefined | pid(),
 	ref :: ranch:ref(),
-	socket = undefined :: inet:socket() | {pid(), cowboy_stream:streamid()} | undefined
-		%% WS-LINGER
-		| closed,
+	socket = undefined :: inet:socket() | {pid(), cowboy_stream:streamid()} | undefined,
 	transport = undefined :: module() | undefined,
 	opts = #{} :: opts(),
 	active = true :: boolean(),
@@ -429,7 +427,7 @@ tick_idle_timeout(State=#state{timeout_num=?IDLE_TIMEOUT_TICKS}, HandlerState, _
 tick_idle_timeout(State=#state{timeout_num=TimeoutNum}, HandlerState, ParseState) ->
 	before_loop(set_idle_timeout(State, TimeoutNum + 1), HandlerState, ParseState).
 
--spec loop(#state{}, any(), parse_state() | undefined) -> no_return().
+-spec loop(#state{}, any(), parse_state() | closed) -> no_return().
 loop(State=#state{parent=Parent, socket=Socket, messages=Messages,
 		timeout_ref=TRef}, HandlerState, ParseState) ->
 	receive
@@ -439,10 +437,10 @@ loop(State=#state{parent=Parent, socket=Socket, messages=Messages,
 			parse(?reset_idle_timeout(State1), HandlerState, ParseState, Data);
 		{Closed, Socket} when Closed =:= element(2, Messages) ->
 			%% WS-LINGER
-			transport_closed(State, HandlerState, {error, sock_closed});
+			websocket_closed(State, HandlerState, {error, sock_closed}, fun closed_loop/2);
 		{Error, Socket, Reason} when Error =:= element(3, Messages) ->
 			%% WS-LINGER
-			transport_closed(State, HandlerState, {error, {sock_error, Reason}});
+			websocket_closed(State, HandlerState, {error, {sock_error, Reason}}, fun closed_loop/2);
 		{Passive, Socket} when Passive =:= element(4, Messages);
 				%% Hardcoded for compatibility with Ranch 1.x.
 				Passive =:= tcp_passive; Passive =:= ssl_passive ->
@@ -479,10 +477,10 @@ loop(State=#state{parent=Parent, socket=Socket, messages=Messages,
 				websocket_info, Message, fun before_loop/3)
 	end.
 
-parse(State, HandlerState, undefined, _Data) ->
+parse(State, HandlerState, closed, _Data) ->
 	%% WS-LINGER
 	%% Ignore all the input data when the conn is in 'closed' state.
-	loop(State, HandlerState, undefined);
+	loop(State, HandlerState, closed);
 parse(State, HandlerState, PS=#ps_header{buffer=Buffer}, Data) ->
 	parse_header(State, HandlerState, PS#ps_header{
 		buffer= <<Buffer/binary, Data/binary>>});
@@ -612,14 +610,14 @@ handler_call(State=#state{handler=Handler}, HandlerState,
 					websocket_closed(State, HandlerState2, Error) % WS-LINGER
 			end;
 		{stop, HandlerState2} ->
-			websocket_close(State, HandlerState2, stop)
+			stop(State, HandlerState2)
 	catch Class:Reason:Stacktrace ->
 		websocket_send_close(State, {crash, Class, Reason}),
 		handler_terminate(State, HandlerState, {crash, Class, Reason}),
 		erlang:raise(Class, Reason, Stacktrace)
 	end.
 
--spec handler_call_result(#state{}, any(), parse_state(), fun(), commands()) -> no_return().
+-spec handler_call_result(#state{}, any(), parse_state() | closed, fun(), commands()) -> no_return().
 handler_call_result(State0, HandlerState, ParseState, NextState, Commands) ->
 	case commands(Commands, State0, []) of
 		{ok, State} ->
@@ -627,7 +625,7 @@ handler_call_result(State0, HandlerState, ParseState, NextState, Commands) ->
 		{{close, Reason}, State} ->
 			websocket_closed(State, HandlerState, Reason);
 		{stop, State} ->
-			websocket_close(State, HandlerState, stop);
+			stop(State, HandlerState);
 		{Error = {error, _}, State} ->
 			websocket_close(State, HandlerState, Error)
 	end.
@@ -682,8 +680,6 @@ transport_send(#state{socket=Socket, transport=Transport}, _, Data) ->
 
 transport_close(#state{transport=undefined}) ->
 	{error, stream};
-transport_close(#state{socket=closed}) ->
-	{error, closed};
 transport_close(#state{socket=Socket, transport=Transport}) ->
 	catch Transport:close(Socket).
 
@@ -719,19 +715,15 @@ is_close_frame({close, _, Reason}) -> {true, Reason};
 is_close_frame(_) -> false.
 
 %% WS-LINGER
-transport_closed(State, HandlerState, Reason) ->
-	websocket_closed(State#state{socket = closed}, HandlerState, Reason).
+websocket_closed(State, HandlerState, Reason) ->
+	websocket_closed(State, HandlerState, Reason, fun transport_close_loop/2).
 
-%% WS-LINGER
-websocket_closed(State, HandlerState, Reason = stop) ->
-	terminate(State, HandlerState, Reason);
-websocket_closed(State = #state{handler = Handler}, HandlerState, Reason) ->
+websocket_closed(State = #state{handler = Handler}, HandlerState, Reason, Then) ->
 	case erlang:function_exported(Handler, websocket_close, 2) of
 		true ->
 			case Handler:websocket_close(Reason, HandlerState) of
 				{ok, HandlerState1} ->
-					transport_close(State),
-					loop(State#state{socket=closed}, HandlerState1, undefined);
+					Then(State, HandlerState1);
 				{_Commands, HandlerState1} ->
 					terminate(State, HandlerState1, Reason)
 			end;
@@ -739,10 +731,22 @@ websocket_closed(State = #state{handler = Handler}, HandlerState, Reason) ->
 			terminate(State, HandlerState, Reason)
 	end.
 
+transport_close_loop(State, HandlerState) ->
+	transport_close(State),
+	closed_loop(State, HandlerState).
+
+closed_loop(State, HandlerState) ->
+	loop(State, HandlerState, closed).
+
 -spec websocket_close(#state{}, any(), terminate_reason()) -> no_return().
 websocket_close(State, HandlerState, Reason) ->
 	websocket_send_close(State, Reason),
 	websocket_closed(State, HandlerState, Reason).
+
+-spec stop(#state{}, any()) -> no_return().
+stop(State, HandlerState) ->
+	websocket_send_close(State, stop),
+	terminate(State, HandlerState, stop).
 
 websocket_send_close(State, Reason) ->
 	_ = case Reason of
