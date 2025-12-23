@@ -13,13 +13,13 @@
 	pid
 }).
 
-init(Req, _) ->
+init(Req, HOpts) ->
 	Pid = list_to_pid(binary_to_list(cowboy_req:header(<<"x-test-pid">>, Req))),
 	Opts = case cowboy_req:qs(Req) of
 		<<"req_filter">> -> #{req_filter => fun(_) -> filtered end};
 		_ -> #{}
 	end,
-	{cowboy_websocket, Req, #state{pid=Pid}, Opts}.
+	{cowboy_test_ws:module(HOpts), Req, #state{pid=Pid}, Opts}.
 
 websocket_init(State) ->
 	{ok, State}.

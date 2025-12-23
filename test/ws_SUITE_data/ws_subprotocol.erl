@@ -9,7 +9,7 @@
 init(Req, Opts) ->
 	[Protocol | _] = cowboy_req:parse_header(<<"sec-websocket-protocol">>, Req),
 	Req2 = cowboy_req:set_resp_header(<<"sec-websocket-protocol">>, Protocol, Req),
-	{cowboy_websocket, Req2, Opts, #{
+	{cowboy_test_ws:module(Opts), Req2, Opts, #{
 		idle_timeout => 1000
 	}}.
 

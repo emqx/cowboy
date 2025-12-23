@@ -7,8 +7,8 @@
 -export([websocket_handle/2]).
 -export([websocket_info/2]).
 
-init(Req, RunOrHibernate) ->
-	{cowboy_websocket, Req, RunOrHibernate,
+init(Req, [RunOrHibernate | Opts]) ->
+	{cowboy_test_ws:module(Opts), Req, RunOrHibernate,
 		#{idle_timeout => infinity}}.
 
 %% Set the idle_timeout option dynamically.

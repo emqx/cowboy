@@ -20,7 +20,7 @@ init(Req=#{qs := Qs}, State) ->
 		<<"mem_level">> -> {mem_level, 1};
 		<<"strategy">> -> {strategy, rle}
 	end,
-	{cowboy_websocket, Req, State, #{
+	{cowboy_test_ws:module(State), Req, State, #{
 		compress => true,
 		deflate_opts => #{Name => Value}
 	}}.

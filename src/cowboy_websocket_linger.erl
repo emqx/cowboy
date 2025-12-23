@@ -435,6 +435,8 @@ loop(State=#state{parent=Parent, socket=Socket, messages=Messages,
 		{OK, Socket, Data} when OK =:= element(1, Messages) ->
 			State1 = maybe_resize_buffer(State, Data),
 			parse(?reset_idle_timeout(State1), HandlerState, ParseState, Data);
+		{Closed, Socket} when Closed =:= element(2, Messages) andalso ParseState =:= closed ->
+			loop(State, HandlerState, ParseState);
 		{Closed, Socket} when Closed =:= element(2, Messages) ->
 			%% WS-LINGER
 			websocket_closed(State, HandlerState, {error, sock_closed}, fun closed_loop/2);
@@ -626,8 +628,10 @@ handler_call_result(State0, HandlerState, ParseState, NextState, Commands) ->
 			websocket_closed(State, HandlerState, Reason);
 		{stop, State} ->
 			stop(State, HandlerState);
-		{Error = {error, _}, State} ->
-			websocket_close(State, HandlerState, Error)
+		{{error, closed}, State} ->
+			websocket_closed(State, HandlerState, {error, sock_closed});
+		{{error, _} = Error, State} ->
+			websocket_closed(State, HandlerState, Error)
 	end.
 
 commands([], State, []) ->
@@ -658,6 +662,8 @@ commands([{set_options, SetOpts}|Tail], State0, Data) ->
 			StateF
 	end, State0, SetOpts),
 	commands(Tail, State, Data);
+commands([{shutdown_reason, ShutdownReason}|Tail], State, Data) ->
+	commands(Tail, State#state{shutdown_reason=ShutdownReason}, Data);
 commands([{shutdown, Reason}|_Tail], State, Data) ->
 	%% WS-LINGER
 	_ = Data =/= [] andalso transport_send(State, fin, lists:reverse(Data)),
