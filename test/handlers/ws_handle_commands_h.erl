@@ -13,7 +13,7 @@ init(Req=#{pid := Pid}, [RunOrHibernate | Opts]) ->
 	Commands0 = cowboy_req:header(<<"x-commands">>, Req),
 	Commands = binary_to_term(base64:decode(Commands0)),
 	case Commands of
-		bad -> ct_helper_error_h:ignore(Pid, cowboy_websocket, handler_call, 6);
+		bad -> ct_helper_error_h:ignore(Pid, cowboy_test_ws:module(Opts), handler_call, 6);
 		_ -> ok
 	end,
 	{cowboy_test_ws:module(Opts), Req, {Commands, RunOrHibernate}}.
