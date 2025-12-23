@@ -662,6 +662,8 @@ commands([{set_options, SetOpts}|Tail], State0, Data) ->
 			StateF
 	end, State0, SetOpts),
 	commands(Tail, State, Data);
+commands([{shutdown_reason, ShutdownReason}|Tail], State, Data) ->
+	commands(Tail, State#state{shutdown_reason=ShutdownReason}, Data);
 commands([{shutdown, Reason}|_Tail], State, Data) ->
 	%% WS-LINGER
 	_ = Data =/= [] andalso transport_send(State, fin, lists:reverse(Data)),
