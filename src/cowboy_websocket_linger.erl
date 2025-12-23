@@ -435,6 +435,8 @@ loop(State=#state{parent=Parent, socket=Socket, messages=Messages,
 		{OK, Socket, Data} when OK =:= element(1, Messages) ->
 			State1 = maybe_resize_buffer(State, Data),
 			parse(?reset_idle_timeout(State1), HandlerState, ParseState, Data);
+		{Closed, Socket} when Closed =:= element(2, Messages) andalso ParseState =:= closed ->
+			loop(State, HandlerState, ParseState);
 		{Closed, Socket} when Closed =:= element(2, Messages) ->
 			%% WS-LINGER
 			websocket_closed(State, HandlerState, {error, sock_closed}, fun closed_loop/2);
