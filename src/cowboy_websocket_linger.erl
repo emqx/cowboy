@@ -626,8 +626,8 @@ handler_call_result(State0, HandlerState, ParseState, NextState, Commands) ->
 			websocket_closed(State, HandlerState, Reason);
 		{stop, State} ->
 			stop(State, HandlerState);
-		{Error = {error, _}, State} ->
-			websocket_close(State, HandlerState, Error)
+		{{error, Reason}, State} ->
+			websocket_closed(State, HandlerState, Reason)
 	end.
 
 commands([], State, []) ->
