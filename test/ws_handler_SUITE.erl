@@ -34,10 +34,14 @@ all() ->
 %% @todo Test against HTTP/2 too.
 groups() ->
 	AllTests = ct_helper:all(?MODULE),
+	LingerTests = [
+		websocket_linger_closed_shutdown,
+		websocket_linger_already_closed
+	],
 	[
-		{ws, [parallel], AllTests},
+		{ws, [parallel], AllTests -- LingerTests},
 		{ws_linger, [parallel], AllTests},
-		{ws_hibernate, [parallel], AllTests},
+		{ws_hibernate, [parallel], AllTests -- LingerTests},
 		{ws_linger_hibernate, [parallel], AllTests}
 	].
 
@@ -73,7 +77,8 @@ init_dispatch(Name) ->
 		{"/active", ws_active_commands_h, Opts},
 		{"/deflate", ws_deflate_commands_h, Opts},
 		{"/set_options", ws_set_options_commands_h, Opts},
-		{"/shutdown_reason", ws_shutdown_reason_commands_h, Opts}
+		{"/shutdown_reason", ws_shutdown_reason_commands_h, Opts},
+		{"/linger", ws_linger_h, RunOrHibernate}
 	]}]).
 
 %% Support functions for testing using Gun.
@@ -366,4 +371,51 @@ websocket_shutdown_reason(Config) ->
 			ok
 	after 1000 ->
 		error(timeout)
+	end.
+
+websocket_linger_closed_shutdown(Config) ->
+	do_websocket_linger_closed_shutdown(normal, Config).
+
+websocket_linger_already_closed(Config) ->
+	do_websocket_linger_closed_shutdown(suspend, Config).
+
+do_websocket_linger_closed_shutdown(Mode, Config) ->
+	doc("Lingering WebSocket smoothly handles frames for already "
+        "closed connections."),
+	ConnPid = gun_open(Config),
+	StreamRef = gun:ws_upgrade(ConnPid, "/linger", [
+		{<<"x-test-pid">>, pid_to_list(self())}
+	]),
+	{upgrade, [<<"websocket">>], _} = gun:await(ConnPid, StreamRef),
+	WsPid = receive {ws_linger_h, P} -> P after 1000 -> error(timeout) end,
+	MRef = monitor(process, WsPid),
+	case Mode of
+		normal -> ok;
+		suspend -> sys:suspend(WsPid)
+	end,
+	ok = gun:ws_send(ConnPid, StreamRef, [{binary, <<"CIAO">>}]),
+	_ = timer:sleep(50),
+	_ = erlang:exit(ConnPid, shutdown),
+	_ = timer:sleep(50),
+	case Mode of
+		normal -> ok;
+		suspend -> sys:resume(WsPid)
+	end,
+	receive
+		{ws_linger_h, {websocket_close, Reason}} ->
+			{error, sock_closed} = Reason
+	after 1000 ->
+		error(timeout)
+	end,
+	receive
+		{'DOWN', MRef, process, WsPid, ExitReason} ->
+			error({unexpected_exit, WsPid, ExitReason})
+	after 1000 ->
+		WsPid ! thatsit,
+		receive
+			{'DOWN', MRef, process, WsPid, ExitReason} ->
+				{shutdown, thatsit} = ExitReason
+		after 1000 ->
+			error(timeout)
+		end
 	end.
