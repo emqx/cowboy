@@ -9,14 +9,14 @@
 -export([websocket_handle/2]).
 -export([websocket_info/2]).
 
-init(Req=#{pid := Pid}, RunOrHibernate) ->
+init(Req=#{pid := Pid}, [RunOrHibernate | Opts]) ->
 	Commands0 = cowboy_req:header(<<"x-commands">>, Req),
 	Commands = binary_to_term(base64:decode(Commands0)),
 	case Commands of
 		bad -> ct_helper_error_h:ignore(Pid, cowboy_websocket, handler_call, 6);
 		_ -> ok
 	end,
-	{cowboy_websocket, Req, {Commands, RunOrHibernate}}.
+	{cowboy_test_ws:module(Opts), Req, {Commands, RunOrHibernate}}.
 
 websocket_init(State) ->
 	{[], State}.

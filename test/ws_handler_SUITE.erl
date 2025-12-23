@@ -24,12 +24,22 @@
 %% ct.
 
 all() ->
-	[{group, ws}, {group, ws_hibernate}].
+	[
+		{group, ws},
+		{group, ws_linger},
+		{group, ws_hibernate},
+		{group, ws_linger_hibernate}
+	].
 
 %% @todo Test against HTTP/2 too.
 groups() ->
 	AllTests = ct_helper:all(?MODULE),
-	[{ws, [parallel], AllTests}, {ws_hibernate, [parallel], AllTests}].
+	[
+		{ws, [parallel], AllTests},
+		{ws_linger, [parallel], AllTests},
+		{ws_hibernate, [parallel], AllTests},
+		{ws_linger_hibernate, [parallel], AllTests}
+	].
 
 init_per_group(Name, Config) ->
 	cowboy_test:init_http(Name, #{
@@ -44,17 +54,26 @@ end_per_group(Name, _) ->
 init_dispatch(Name) ->
 	RunOrHibernate = case Name of
 		ws -> run;
-		ws_hibernate -> hibernate
+		ws_linger -> run;
+		ws_hibernate -> hibernate;
+		ws_linger_hibernate -> hibernate
 	end,
+	Module = case Name of
+		ws -> cowboy_websocket;
+		ws_linger -> cowboy_websocket_linger;
+		ws_hibernate -> cowboy_websocket;
+		ws_linger_hibernate -> cowboy_websocket_linger
+	end,
+	Opts = [RunOrHibernate | cowboy_test_ws:mkopts(Module)],
 	cowboy_router:compile([{'_', [
-		{"/init", ws_init_commands_h, RunOrHibernate},
-		{"/handle", ws_handle_commands_h, RunOrHibernate},
-		{"/info", ws_info_commands_h, RunOrHibernate},
-		{"/trap_exit", ws_init_h, RunOrHibernate},
-		{"/active", ws_active_commands_h, RunOrHibernate},
-		{"/deflate", ws_deflate_commands_h, RunOrHibernate},
-		{"/set_options", ws_set_options_commands_h, RunOrHibernate},
-		{"/shutdown_reason", ws_shutdown_reason_commands_h, RunOrHibernate}
+		{"/init", ws_init_commands_h, Opts},
+		{"/handle", ws_handle_commands_h, Opts},
+		{"/info", ws_info_commands_h, Opts},
+		{"/trap_exit", ws_init_h, Opts},
+		{"/active", ws_active_commands_h, Opts},
+		{"/deflate", ws_deflate_commands_h, Opts},
+		{"/set_options", ws_set_options_commands_h, Opts},
+		{"/shutdown_reason", ws_shutdown_reason_commands_h, Opts}
 	]}]).
 
 %% Support functions for testing using Gun.

@@ -22,54 +22,61 @@
 %% ct.
 
 all() ->
-	[{group, ws}].
+	[{group, ws}, {group, ws_linger}].
 
 groups() ->
-	[{ws, [parallel], ct_helper:all(?MODULE)}].
+	[
+		{ws,        [parallel], ct_helper:all(?MODULE)},
+		{ws_linger, [parallel], ct_helper:all(?MODULE)}
+	].
 
 init_per_group(Name, Config) ->
 	cowboy_test:init_http(Name, #{
-		env => #{dispatch => init_dispatch()}
-	}, Config).
+		env => #{dispatch => init_dispatch(Name)}
+	}, [{ct_group, Name} | Config]).
 
 end_per_group(Listener, _Config) ->
 	cowboy:stop_listener(Listener).
 
 %% Dispatch configuration.
 
-init_dispatch() ->
+init_dispatch(Name) ->
+	Opts = case Name of
+		ws ->        cowboy_test_ws:mkopts(cowboy_websocket);
+		ws_linger -> cowboy_test_ws:mkopts(cowboy_websocket_linger)
+	end,
 	cowboy_router:compile([
 		{"localhost", [
-			{"/ws_echo", ws_echo, []},
-			{"/ws_echo_timer", ws_echo_timer, []},
-			{"/ws_init", ws_init_h, []},
-			{"/ws_init_shutdown", ws_init_shutdown, []},
+			{"/ws_echo", ws_echo, Opts},
+			{"/ws_echo_timer", ws_echo_timer, Opts},
+			{"/ws_init", ws_init_h, Opts},
+			{"/ws_init_shutdown", ws_init_shutdown, Opts},
 			{"/ws_send_many", ws_send_many, [
 				{sequence, [
 					{text, <<"one">>},
 					{text, <<"two">>},
-					{text, <<"seven!">>}]}
+					{text, <<"seven!">>}]} | Opts
 			]},
 			{"/ws_send_close", ws_send_many, [
 				{sequence, [
 					{text, <<"send">>},
 					close,
-					{text, <<"won't be received">>}]}
+					{text, <<"won't be received">>}]} | Opts
 			]},
 			{"/ws_send_close_payload", ws_send_many, [
 				{sequence, [
 					{text, <<"send">>},
 					{close, 1001, <<"some text!">>},
-					{text, <<"won't be received">>}]}
+					{text, <<"won't be received">>}]} | Opts
 			]},
-			{"/ws_subprotocol", ws_subprotocol, []},
-			{"/terminate", ws_terminate_h, []},
-			{"/ws_timeout_hibernate", ws_timeout_hibernate, []},
-			{"/ws_timeout_cancel", ws_timeout_cancel, []},
-			{"/ws_max_frame_size", ws_max_frame_size, []},
-			{"/ws_deflate_opts", ws_deflate_opts_h, []},
-			{"/ws_dont_validate_utf8", ws_dont_validate_utf8_h, []},
-			{"/ws_ping", ws_ping_h, []}
+			{"/ws_subprotocol", ws_subprotocol, Opts},
+			{"/terminate", ws_terminate_h, Opts},
+			{"/ws_timeout_hibernate", ws_timeout_hibernate, Opts},
+			{"/ws_timeout_cancel", ws_timeout_cancel, Opts},
+			{"/ws_max_frame_size", ws_max_frame_size, Opts},
+			{"/ws_deflate_opts", ws_deflate_opts_h, Opts},
+			{"/ws_dont_validate_utf8", ws_dont_validate_utf8_h, Opts},
+			{"/ws_ping", ws_ping_h, Opts}
 		]}
 	]).
 
@@ -100,7 +107,8 @@ do_unlimited_connections(Config) ->
 	%% We have at least 3000 client and 3000 server sockets.
 	true = length(erlang:ports()) > 6000,
 	%% Ranch thinks we have no connections.
-	0 = ranch_server:count_connections(ws),
+	Listener = proplists:get_value(ct_group, Config),
+	0 = ranch_server:count_connections(Listener),
 	ok.
 
 do_connect_and_loop(Config) ->

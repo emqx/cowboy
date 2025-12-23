@@ -6,9 +6,9 @@
 -export([websocket_handle/2]).
 -export([websocket_info/2]).
 
-init(Req, _) ->
+init(Req, Opts) ->
 	erlang:start_timer(500, self(), should_not_cancel_timer),
-	{cowboy_websocket, Req, undefined, #{
+	{cowboy_test_ws:module(Opts), Req, undefined, #{
 		idle_timeout => 1000
 	}}.
 

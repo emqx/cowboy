@@ -8,7 +8,7 @@
 -export([websocket_info/2]).
 
 init(Req, State) ->
-	{cowboy_websocket, Req, State, #{
+	{cowboy_test_ws:module(State), Req, State, #{
 		validate_utf8 => false
 	}}.
 

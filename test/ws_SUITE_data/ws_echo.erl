@@ -6,8 +6,8 @@
 -export([websocket_handle/2]).
 -export([websocket_info/2]).
 
-init(Req, _) ->
-	{cowboy_websocket, Req, undefined, #{
+init(Req, Opts) ->
+	{cowboy_test_ws:module(Opts), Req, undefined, #{
 		compress => true
 	}}.
 
