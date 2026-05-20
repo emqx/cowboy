@@ -39,6 +39,7 @@
 	idle_timeout => timeout(),
 	inactivity_timeout => timeout(),
 	initial_stream_flow_size => non_neg_integer(),
+	invalid_response_headers => error_terminate | ignore,
 	linger_timeout => timeout(),
 	logger => module(),
 	max_authority_length => non_neg_integer(),
@@ -1091,6 +1092,14 @@ commands(State, StreamID, [{error_response, _, _, _}|Tail]) ->
 %% Send an informational response.
 commands(State0=#state{socket=Socket, transport=Transport, out_state=wait, streams=Streams},
 		StreamID, [{inform, StatusCode, Headers}|Tail]) ->
+	case maybe_invalid_response_headers(Headers, State0) of
+		error_terminate ->
+			Reason = {internal_error, invalid_response_header,
+				'An invalid response header was detected in an informational response.'},
+			terminate(stream_terminate(State0, StreamID, Reason), Reason);
+		ok ->
+			ok
+	end,
 	%% @todo I'm pretty sure the last stream in the list is the one we want
 	%% considering all others are queued.
 	#stream{version=Version} = lists:keyfind(StreamID, #stream.id, Streams),
@@ -1111,6 +1120,14 @@ commands(State0=#state{socket=Socket, transport=Transport, out_state=wait, strea
 %% @todo Same two things above apply to DATA, possibly promise too.
 commands(State0=#state{socket=Socket, transport=Transport, out_state=wait, streams=Streams}, StreamID,
 		[{response, StatusCode, Headers0, Body}|Tail]) ->
+	case maybe_invalid_response_headers(Headers0, State0) of
+		error_terminate ->
+			Reason = {internal_error, invalid_response_header,
+				'An invalid response header was detected.'},
+			terminate(stream_terminate(State0, StreamID, Reason), Reason);
+		ok ->
+			ok
+	end,
 	%% @todo I'm pretty sure the last stream in the list is the one we want
 	%% considering all others are queued.
 	#stream{version=Version} = lists:keyfind(StreamID, #stream.id, Streams),
@@ -1132,6 +1149,14 @@ commands(State0=#state{socket=Socket, transport=Transport, out_state=wait, strea
 commands(State0=#state{socket=Socket, transport=Transport,
 		opts=Opts, overriden_opts=Override, streams=Streams0, out_state=OutState},
 		StreamID, [{headers, StatusCode, Headers0}|Tail]) ->
+	case maybe_invalid_response_headers(Headers0, State0) of
+		error_terminate ->
+			Reason = {internal_error, invalid_response_header,
+				'An invalid response header was detected.'},
+			terminate(stream_terminate(State0, StreamID, Reason), Reason);
+		ok ->
+			ok
+	end,
 	%% @todo Same as above (about the last stream in the list).
 	Stream = #stream{version=Version} = lists:keyfind(StreamID, #stream.id, Streams0),
 	Status = cow_http:status_to_integer(StatusCode),
@@ -1236,6 +1261,16 @@ commands(State0=#state{socket=Socket, transport=Transport, streams=Streams0, out
 	commands(State#state{streams=Streams}, StreamID, Tail);
 commands(State0=#state{socket=Socket, transport=Transport, streams=Streams, out_state=OutState},
 		StreamID, [{trailers, Trailers}|Tail]) ->
+	case maybe_invalid_response_headers(Trailers, State0) of
+		error_terminate ->
+			%% When there are invalid trailer headers the only thing
+			%% we can do is drop the connection.
+			Reason = {internal_error, invalid_response_header,
+				'An invalid response header was detected in trailers.'},
+			terminate(State0, Reason);
+		ok ->
+			ok
+	end,
 	case stream_te(OutState, lists:keyfind(StreamID, #stream.id, Streams)) of
 		trailers ->
 			ok = maybe_socket_error(State0,
@@ -1257,6 +1292,14 @@ commands(State0=#state{socket=Socket, transport=Transport, streams=Streams, out_
 commands(State0=#state{ref=Ref, parent=Parent, socket=Socket, transport=Transport,
 		out_state=OutState, buffer=Buffer, children=Children}, StreamID,
 		[{switch_protocol, Headers, Protocol, InitialState}|_Tail]) ->
+	case maybe_invalid_response_headers(Headers, State0) of
+		error_terminate ->
+			Reason = {internal_error, invalid_response_header,
+				'An invalid response header was detected when switching protocol.'},
+			terminate(stream_terminate(State0, StreamID, Reason), Reason);
+		ok ->
+			ok
+	end,
 	%% @todo If there's streams opened after this one, fail instead of 101.
 	State1 = cancel_timeout(State0),
 	%% Before we send the 101 response we need to stop receiving data
@@ -1310,6 +1353,29 @@ commands(State=#state{opts=Opts}, StreamID, [Log={log, _, _, _}|Tail]) ->
 %% HTTP/1.1 does not support push; ignore.
 commands(State, StreamID, [{push, _, _, _, _, _, _, _}|Tail]) ->
 	commands(State, StreamID, Tail).
+
+maybe_invalid_response_headers(Headers, #state{opts=Opts}) ->
+	case maps:get(invalid_response_headers, Opts, error_terminate) of
+		error_terminate ->
+			It = maps:iterator(Headers),
+			maybe_invalid_response_headers(maps:next(It));
+		ignore ->
+			ok
+	end.
+
+maybe_invalid_response_headers({_, V, It}) when is_binary(V) ->
+	case binary:match(V, [<<$\r>>, <<$\n>>]) of
+		nomatch ->
+			maybe_invalid_response_headers(maps:next(It));
+		_ ->
+			error_terminate
+	end;
+maybe_invalid_response_headers({K, V, It}) ->
+	%% We build a temporary binary for simplicity's sake
+	%% when we have a list/iolist.
+	maybe_invalid_response_headers({K, iolist_to_binary(V), It});
+maybe_invalid_response_headers(none) ->
+	ok.
 
 %% The set-cookie header is special; we can only send one cookie per header.
 headers_to_list(Headers0=#{<<"set-cookie">> := SetCookies}) ->
