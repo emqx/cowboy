@@ -1331,13 +1331,14 @@ push_method(Config) ->
 		http3 -> {skip, "Implement server push for HTTP/3."}
 	end.
 
-
-push_origin(Config) ->
-	case config(protocol, Config) of
-		http -> do_push_http("/resp/push/origin", Config);
-		http2 -> do_push_http2_origin(Config);
-		http3 -> {skip, "Implement server push for HTTP/3."}
-	end.
+%% @todo Using custom origin currently disabled in Gun.
+%%       Reenable when Gun supports multiple authoritative origins.
+%push_origin(Config) ->
+%	case config(protocol, Config) of
+%		http -> do_push_http("/resp/push/origin", Config);
+%		http2 -> do_push_http2_origin(Config);
+%		http3 -> {skip, "Implement server push for HTTP/3."}
+%	end.
 
 push_qs(Config) ->
 	case config(protocol, Config) of

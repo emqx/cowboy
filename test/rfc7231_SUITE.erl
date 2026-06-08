@@ -473,8 +473,12 @@ status_code_101(Config) ->
 	Ref = gun:get(ConnPid, "/resp/inform2/101", [
 		{<<"accept-encoding">>, <<"gzip">>}
 	]),
-	{inform, 101, []} = gun:await(ConnPid, Ref),
-	ok.
+	case gun:await(ConnPid, Ref) of
+		%% Gun HTTP/1 rejects unexpected 101 with a protocol_error connection error.
+		{error, {connection_error,
+			{connection_error, protocol_error, _}}} -> ok;
+		{inform, 101, []} -> ok
+	end.
 
 status_code_200(Config) ->
 	doc("The 200 OK status code can be sent. (RFC7231 6.3.1)"),

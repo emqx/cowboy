@@ -61,7 +61,10 @@ init_commands(_, _, State=#state{test=switch_protocol_after_headers_data}) ->
 init_commands(_, _, State=#state{test=switch_protocol_after_response}) ->
 	[{response, 200, #{}, <<"{}">>}, {switch_protocol, #{}, ?MODULE, State}];
 init_commands(_, _, State=#state{test=terminate_on_switch_protocol}) ->
-	[{switch_protocol, #{}, ?MODULE, State}];
+	[{switch_protocol, #{
+		<<"connection">> => <<"upgrade">>,
+		<<"upgrade">> => <<"shsp">>
+	}, ?MODULE, State}];
 init_commands(_, _, #state{test=terminate_on_stop}) ->
 	[{response, 204, #{}, <<>>}];
 init_commands(_, _, _) ->
