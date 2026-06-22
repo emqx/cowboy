@@ -3811,6 +3811,38 @@ reject_empty_path(Config) ->
 	{ok, << _:24, 3:8, _:8, 1:32, 1:32 >>} = gen_tcp:recv(Socket, 13, 6000),
 	ok.
 
+reject_invalid_pseudo_header_method_crlf(Config) ->
+	doc("A request with an invalid method component must be rejected "
+		"with a PROTOCOL_ERROR stream error. (RFC9110 5.5)"),
+	{ok, Socket} = do_handshake(Config),
+	%% Send a HEADERS frame with an invalid :method pseudo-header.
+	{HeadersBlock, _} = cow_hpack:encode([
+		{<<":method">>, <<"GET\r\n">>},
+		{<<":scheme">>, <<"http">>},
+		{<<":authority">>, <<"localhost">>}, %% @todo Correct port number.
+		{<<":path">>, <<"/">>}
+	]),
+	ok = gen_tcp:send(Socket, cow_http2:headers(1, fin, HeadersBlock)),
+	%% Receive a PROTOCOL_ERROR stream error.
+	{ok, << _:24, 3:8, _:8, 1:32, 1:32 >>} = gen_tcp:recv(Socket, 13, 6000),
+	ok.
+
+reject_invalid_pseudo_header_method_nul(Config) ->
+	doc("A request with an invalid method component must be rejected "
+		"with a PROTOCOL_ERROR stream error. (RFC9110 5.5)"),
+	{ok, Socket} = do_handshake(Config),
+	%% Send a HEADERS frame with an invalid :method pseudo-header.
+	{HeadersBlock, _} = cow_hpack:encode([
+		{<<":method">>, <<"GET\0">>},
+		{<<":scheme">>, <<"http">>},
+		{<<":authority">>, <<"localhost">>}, %% @todo Correct port number.
+		{<<":path">>, <<"/">>}
+	]),
+	ok = gen_tcp:send(Socket, cow_http2:headers(1, fin, HeadersBlock)),
+	%% Receive a PROTOCOL_ERROR stream error.
+	{ok, << _:24, 3:8, _:8, 1:32, 1:32 >>} = gen_tcp:recv(Socket, 13, 6000),
+	ok.
+
 reject_missing_pseudo_header_method(Config) ->
 	doc("A request without a method component must be rejected "
 		"with a PROTOCOL_ERROR stream error. (RFC7540 8.1.2.3, RFC7540 8.1.2.6)"),
@@ -3834,6 +3866,38 @@ reject_many_pseudo_header_method(Config) ->
 	{HeadersBlock, _} = cow_hpack:encode([
 		{<<":method">>, <<"GET">>},
 		{<<":method">>, <<"GET">>},
+		{<<":scheme">>, <<"http">>},
+		{<<":authority">>, <<"localhost">>}, %% @todo Correct port number.
+		{<<":path">>, <<"/">>}
+	]),
+	ok = gen_tcp:send(Socket, cow_http2:headers(1, fin, HeadersBlock)),
+	%% Receive a PROTOCOL_ERROR stream error.
+	{ok, << _:24, 3:8, _:8, 1:32, 1:32 >>} = gen_tcp:recv(Socket, 13, 6000),
+	ok.
+
+reject_invalid_pseudo_header_scheme_crlf(Config) ->
+	doc("A request with an invalid scheme component must be rejected "
+		"with a PROTOCOL_ERROR stream error. (RFC9110 5.5)"),
+	{ok, Socket} = do_handshake(Config),
+	%% Send a HEADERS frame with an invalid :method pseudo-header.
+	{HeadersBlock, _} = cow_hpack:encode([
+		{<<":method">>, <<"GET\r\n">>},
+		{<<":scheme">>, <<"http">>},
+		{<<":authority">>, <<"localhost">>}, %% @todo Correct port number.
+		{<<":path">>, <<"/">>}
+	]),
+	ok = gen_tcp:send(Socket, cow_http2:headers(1, fin, HeadersBlock)),
+	%% Receive a PROTOCOL_ERROR stream error.
+	{ok, << _:24, 3:8, _:8, 1:32, 1:32 >>} = gen_tcp:recv(Socket, 13, 6000),
+	ok.
+
+reject_invalid_pseudo_header_scheme_nul(Config) ->
+	doc("A request with an invalid scheme component must be rejected "
+		"with a PROTOCOL_ERROR stream error. (RFC9110 5.5)"),
+	{ok, Socket} = do_handshake(Config),
+	%% Send a HEADERS frame with an invalid :method pseudo-header.
+	{HeadersBlock, _} = cow_hpack:encode([
+		{<<":method">>, <<"GET\0">>},
 		{<<":scheme">>, <<"http">>},
 		{<<":authority">>, <<"localhost">>}, %% @todo Correct port number.
 		{<<":path">>, <<"/">>}
@@ -3868,6 +3932,38 @@ reject_many_pseudo_header_scheme(Config) ->
 		{<<":scheme">>, <<"http">>},
 		{<<":scheme">>, <<"http">>},
 		{<<":authority">>, <<"localhost">>}, %% @todo Correct port number.
+		{<<":path">>, <<"/">>}
+	]),
+	ok = gen_tcp:send(Socket, cow_http2:headers(1, fin, HeadersBlock)),
+	%% Receive a PROTOCOL_ERROR stream error.
+	{ok, << _:24, 3:8, _:8, 1:32, 1:32 >>} = gen_tcp:recv(Socket, 13, 6000),
+	ok.
+
+reject_invalid_pseudo_header_authority_crlf(Config) ->
+	doc("A request with an invalid authority component must be rejected "
+		"with a PROTOCOL_ERROR stream error. (RFC9110 5.5)"),
+	{ok, Socket} = do_handshake(Config),
+	%% Send a HEADERS frame with an invalid :authority pseudo-header.
+	{HeadersBlock, _} = cow_hpack:encode([
+		{<<":method">>, <<"GET">>},
+		{<<":scheme">>, <<"http">>},
+		{<<":authority">>, <<"localhost\r\n">>}, %% @todo Correct port number.
+		{<<":path">>, <<"/">>}
+	]),
+	ok = gen_tcp:send(Socket, cow_http2:headers(1, fin, HeadersBlock)),
+	%% Receive a PROTOCOL_ERROR stream error.
+	{ok, << _:24, 3:8, _:8, 1:32, 1:32 >>} = gen_tcp:recv(Socket, 13, 6000),
+	ok.
+
+reject_invalid_pseudo_header_authority_nul(Config) ->
+	doc("A request with an invalid authority component must be rejected "
+		"with a PROTOCOL_ERROR stream error. (RFC9110 5.5)"),
+	{ok, Socket} = do_handshake(Config),
+	%% Send a HEADERS frame with an invalid :authority pseudo-header.
+	{HeadersBlock, _} = cow_hpack:encode([
+		{<<":method">>, <<"GET">>},
+		{<<":scheme">>, <<"http">>},
+		{<<":authority">>, <<"localhost\0">>}, %% @todo Correct port number.
 		{<<":path">>, <<"/">>}
 	]),
 	ok = gen_tcp:send(Socket, cow_http2:headers(1, fin, HeadersBlock)),
@@ -3940,6 +4036,38 @@ reject_missing_pseudo_header_path(Config) ->
 		{<<":method">>, <<"GET">>},
 		{<<":scheme">>, <<"http">>},
 		{<<":authority">>, <<"localhost">>} %% @todo Correct port number.
+	]),
+	ok = gen_tcp:send(Socket, cow_http2:headers(1, fin, HeadersBlock)),
+	%% Receive a PROTOCOL_ERROR stream error.
+	{ok, << _:24, 3:8, _:8, 1:32, 1:32 >>} = gen_tcp:recv(Socket, 13, 6000),
+	ok.
+
+reject_invalid_pseudo_header_path_crlf(Config) ->
+	doc("A request with an invalid path component must be rejected "
+		"with a PROTOCOL_ERROR stream error. (RFC9110 5.5)"),
+	{ok, Socket} = do_handshake(Config),
+	%% Send a HEADERS frame with an invalid :path pseudo-header.
+	{HeadersBlock, _} = cow_hpack:encode([
+		{<<":method">>, <<"GET">>},
+		{<<":scheme">>, <<"http">>},
+		{<<":authority">>, <<"localhost">>}, %% @todo Correct port number.
+		{<<":path">>, <<"/\r\n">>}
+	]),
+	ok = gen_tcp:send(Socket, cow_http2:headers(1, fin, HeadersBlock)),
+	%% Receive a PROTOCOL_ERROR stream error.
+	{ok, << _:24, 3:8, _:8, 1:32, 1:32 >>} = gen_tcp:recv(Socket, 13, 6000),
+	ok.
+
+reject_invalid_pseudo_header_path_nul(Config) ->
+	doc("A request with an invalid path component must be rejected "
+		"with a PROTOCOL_ERROR stream error. (RFC9110 5.5)"),
+	{ok, Socket} = do_handshake(Config),
+	%% Send a HEADERS frame with an invalid :path pseudo-header.
+	{HeadersBlock, _} = cow_hpack:encode([
+		{<<":method">>, <<"GET">>},
+		{<<":scheme">>, <<"http">>},
+		{<<":authority">>, <<"localhost">>}, %% @todo Correct port number.
+		{<<":path">>, <<"/\0">>}
 	]),
 	ok = gen_tcp:send(Socket, cow_http2:headers(1, fin, HeadersBlock)),
 	%% Receive a PROTOCOL_ERROR stream error.
