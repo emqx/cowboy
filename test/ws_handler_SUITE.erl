@@ -36,7 +36,8 @@ groups() ->
 	AllTests = ct_helper:all(?MODULE),
 	LingerTests = [
 		websocket_linger_closed_shutdown,
-		websocket_linger_already_closed
+		websocket_linger_already_closed,
+		websocket_linger_close_shutdown_reason
 	],
 	[
 		{ws, [parallel], AllTests -- LingerTests},
@@ -78,7 +79,8 @@ init_dispatch(Name) ->
 		{"/deflate", ws_deflate_commands_h, Opts},
 		{"/set_options", ws_set_options_commands_h, Opts},
 		{"/shutdown_reason", ws_shutdown_reason_commands_h, Opts},
-		{"/linger", ws_linger_h, RunOrHibernate}
+		{"/linger", ws_linger_h, RunOrHibernate},
+		{"/linger_close_shutdown", ws_linger_close_shutdown_h, RunOrHibernate}
 	]}]).
 
 %% Support functions for testing using Gun.
@@ -418,4 +420,28 @@ do_websocket_linger_closed_shutdown(Mode, Config) ->
 		after 1000 ->
 			error(timeout)
 		end
+	end.
+
+websocket_linger_close_shutdown_reason(Config) ->
+	doc("A {shutdown, Reason} command returned from websocket_close/2 "
+		"reaches terminate/3."),
+	ConnPid = gun_open(Config),
+	StreamRef = gun:ws_upgrade(ConnPid, "/linger_close_shutdown", [
+		{<<"x-test-pid">>, pid_to_list(self())}
+	]),
+	{upgrade, [<<"websocket">>], _} = gun:await(ConnPid, StreamRef),
+	WsPid = receive {ws_linger_close_shutdown_h, P} -> P after 1000 -> error(timeout) end,
+	MRef = monitor(process, WsPid),
+	_ = erlang:exit(ConnPid, shutdown),
+	receive
+		{ws_linger_close_shutdown_h, {websocket_close, SockReason}} ->
+			{error, sock_closed} = SockReason
+	after 1000 ->
+		error(timeout)
+	end,
+	receive
+		{'DOWN', MRef, process, WsPid, {shutdown, {error, sock_closed}}} ->
+			ok
+	after 1000 ->
+		error(timeout)
 	end.
