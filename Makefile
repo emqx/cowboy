@@ -65,11 +65,10 @@ ifndef FULL
 CT_SUITES := $(filter-out examples http_perf ws_autobahn ws_perf,$(CT_SUITES))
 endif
 
-# Don't run HTTP/3 test suites on Windows.
+# Don't run HTTP/3 test suites: gun 2.1.0, the version EMQX ships,
+# has no HTTP/3 client, and quicer is not built.
 
-ifeq ($(PLATFORM),msys2)
 CT_SUITES := $(filter-out rfc9114 rfc9204 rfc9220,$(CT_SUITES))
-endif
 
 # Compile options.
 
