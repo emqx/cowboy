@@ -16,23 +16,23 @@ CT_OPTS += -ct_hooks cowboy_ct_hook [] # -boot start_sasl
 LOCAL_DEPS = crypto
 
 DEPS = cowlib ranch
-dep_cowlib = git https://github.com/ninenines/cowlib 2.15.0
+dep_cowlib = git https://github.com/ninenines/cowlib 2.14.0
 dep_ranch = git https://github.com/ninenines/ranch 1.8.1
 
 ifeq ($(COWBOY_QUICER),1)
 DEPS += quicer
-dep_quicer = git https://github.com/emqx/quic main
+dep_quicer = git https://github.com/emqx/quic 0.4.11
 endif
 
 DOC_DEPS = asciideck
 
 TEST_DEPS = $(if $(CI_ERLANG_MK),ci.erlang.mk) ct_helper gun
-dep_ct_helper = git https://github.com/extend/ct_helper master
-dep_gun = git https://github.com/ninenines/gun master
+dep_ct_helper = git https://github.com/extend/ct_helper 9df44e96150dd0eb17e86a2589e3531b0f4305d2
+dep_gun = git https://github.com/ninenines/gun 2.1.0
 
 # CI configuration.
 
-dep_ci.erlang.mk = git https://github.com/ninenines/ci.erlang.mk master
+dep_ci.erlang.mk = git https://github.com/ninenines/ci.erlang.mk 1497ed990b93a72f6ed6da79e3db36b232cbd536
 DEP_EARLY_PLUGINS = ci.erlang.mk
 
 AUTO_CI_OTP ?= OTP-LATEST-24+
