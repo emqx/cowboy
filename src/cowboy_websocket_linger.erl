@@ -730,8 +730,10 @@ websocket_closed(State = #state{handler = Handler}, HandlerState, Reason, Then) 
 			case Handler:websocket_close(Reason, HandlerState) of
 				{ok, HandlerState1} ->
 					Then(State, HandlerState1);
-				{_Commands, HandlerState1} ->
-					terminate(State, HandlerState1, Reason)
+				{Commands, HandlerState1} ->
+					%% Apply commands so that a shutdown reason reaches terminate/3.
+					{_, State1} = commands(Commands, State, []),
+					terminate(State1, HandlerState1, Reason)
 			end;
 		false ->
 			terminate(State, HandlerState, Reason)
