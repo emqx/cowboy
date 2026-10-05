@@ -68,17 +68,19 @@ stop_group(Ref) ->
 %% Common group of listeners used by most suites.
 
 common_all() ->
+	%% HTTP/3 groups are disabled: gun 2.1.0, the version EMQX ships,
+	%% has no HTTP/3 client, and quicer is not built.
 	All = [
 		{group, http},
 		{group, https},
 		{group, h2},
 		{group, h2c},
-		{group, h3},
+%		{group, h3},
 		{group, http_compress},
 		{group, https_compress},
 		{group, h2_compress},
-		{group, h2c_compress},
-		{group, h3_compress}
+		{group, h2c_compress}
+%		{group, h3_compress}
 	],
 	%% Don't run HTTP/3 tests on Windows for now.
 	case os:type() of

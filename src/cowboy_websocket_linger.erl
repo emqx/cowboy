@@ -721,9 +721,12 @@ is_close_frame({close, _, Reason}) -> {true, Reason};
 is_close_frame(_) -> false.
 
 %% WS-LINGER
+-spec websocket_closed(#state{}, any(), any()) -> no_return().
 websocket_closed(State, HandlerState, Reason) ->
 	websocket_closed(State, HandlerState, Reason, fun transport_close_loop/2).
 
+-spec websocket_closed(#state{}, any(), any(),
+	fun((#state{}, any()) -> no_return())) -> no_return().
 websocket_closed(State = #state{handler = Handler}, HandlerState, Reason, Then) ->
 	case erlang:function_exported(Handler, websocket_close, 2) of
 		true ->

@@ -23,12 +23,13 @@
 %% ct.
 
 all() ->
+	%% HTTP/3 groups are disabled, see cowboy_test:common_all/0.
 	All = [
 		{group, http_compress},
 		{group, https_compress},
 		{group, h2_compress},
-		{group, h2c_compress},
-		{group, h3_compress}
+		{group, h2c_compress}
+%		{group, h3_compress}
 	],
 	%% Don't run HTTP/3 tests on Windows for now.
 	case os:type() of

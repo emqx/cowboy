@@ -1,4 +1,4 @@
-## Use workflows from ninenines/ci.erlang.mk to test Cowboy.
+## Test Cowboy against the OTP releases and dependency versions EMQX ships.
 
 name: Check Cowboy
 
@@ -6,64 +6,75 @@ on:
   push:
     branches:
       - master
+      - emqx-2.13.x
   pull_request:
-  schedule:
-      ## Every Monday at 2am.
-      - cron: 0 2 * * 1
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  cleanup-master:
-    name: Cleanup master build
-    runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'schedule' }}
-    permissions:
-      actions: write
-    steps:
-
-    - name: Cleanup master build if necessary
-      run: |
-        gh cache delete Linux-X64-Erlang-master -R $REPO || true
-        gh cache delete macOS-ARM64-Erlang-master -R $REPO || true
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        REPO: ${{ github.repository }}
-
-  check:
-    name: Cowboy
-    needs: cleanup-master
-    if: ${{ !cancelled() }}
-    uses: ninenines/ci.erlang.mk/.github/workflows/ci.yaml@master
-
-# The examples test suite is nice to run but typically not
-# important. So we run them after we are done with the other
-# test suites. At this point we know that Erlang was built
-# so we can just use the latest version.
-
-  examples:
-    name: Check examples
-    runs-on: 'ubuntu-latest'
+  dialyze:
+    name: Dialyzer (OTP-${{ matrix.otp }})
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        otp:
+          - 28.5.0.7
     steps:
 
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Install latest Erlang/OTP
+    - name: Install Erlang/OTP
       uses: erlef/setup-beam@v1
       with:
-        otp-version: latest
+        otp-version: ${{ matrix.otp }}
+        version-type: strict
 
-    - name: Run ct-examples
-      run: make ct-examples
+    ## Dialyzer needs quicer's Erlang modules to check cowboy_http3.
+    ## The Makefile skips quicer's NIF build.
+    - name: Run Dialyzer
+      run: make dialyze dep_ranch="git https://github.com/emqx/ranch 2.2.0-emqx-3"
+      env:
+        COWBOY_QUICER: 1
+
+  test:
+    name: Tests (OTP-${{ matrix.otp }}, ranch ${{ matrix.ranch }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        ## The OTP and ranch combinations of the EMQX releases built on this branch.
+        include:
+          ## EMQX 5.10
+          - otp: 27.3.4.18
+            ranch: 1.8.1-emqx-1
+          ## EMQX 6.0
+          - otp: 27.3.4.18
+            ranch: 2.2.0-emqx-3
+          ## EMQX 6.1 and later
+          - otp: 28.5.0.7
+            ranch: 2.2.0-emqx-3
+    steps:
+
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install Erlang/OTP
+      uses: erlef/setup-beam@v1
+      with:
+        otp-version: ${{ matrix.otp }}
+        version-type: strict
+
+    - name: Run tests
+      run: make -k tests dep_ranch="git https://github.com/emqx/ranch ${{ matrix.ranch }}"
 
     - name: Upload logs
       uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: Common Test logs (examples)
+        name: Common Test logs (OTP-${{ matrix.otp }}, ranch ${{ matrix.ranch }})
         path: |
           logs/
           !logs/**/log_private
