@@ -61,9 +61,8 @@ the Autobahn test suite, which is an extensive suite of tests
 covering all aspects of the protocol. Cowboy passes the
 suite with 100% success, including all optional tests.
 
-Cowboy's Websocket implementation also includes the
-permessage-deflate and x-webkit-deflate-frame compression
-extensions.
+Cowboy's Websocket implementation includes the
+permessage-deflate compression extension.
 
 Cowboy will automatically use compression when the
 `compress` option is returned from the `init/2` function.
