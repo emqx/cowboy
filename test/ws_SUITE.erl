@@ -22,12 +22,28 @@
 %% ct.
 
 all() ->
-	[{group, ws}, {group, ws_linger}].
+	[{group, ws}, {group, ws_linger}, {group, ws_deflate}, {group, ws_linger_deflate}].
 
 groups() ->
+	AllTests = ct_helper:all(?MODULE),
+	DeflateTests = [
+		ws_deflate_segmented_close,
+		ws_deflate_segmented_at_limit,
+		ws_deflate_segmented_mask,
+		ws_deflate_fragmented_close,
+		ws_deflate_fragmented_ok,
+		ws_deflate_unlimited
+	],
+	%% A typo here would silently drop a test case from every group.
+	true = lists:all(fun(Test) -> lists:member(Test, AllTests) end, DeflateTests),
 	[
-		{ws,        [parallel], ct_helper:all(?MODULE)},
-		{ws_linger, [parallel], ct_helper:all(?MODULE)}
+		{ws,        [parallel], AllTests -- DeflateTests},
+		{ws_linger, [parallel], AllTests -- DeflateTests},
+		%% The tests below run without parallel siblings: some of them replace
+		%% cow_deflate:inflate/3 node-wide to get a deterministic delivery
+		%% barrier, which would interfere with other compressed connections.
+		{ws_deflate,        [], DeflateTests},
+		{ws_linger_deflate, [], DeflateTests}
 	].
 
 init_per_group(Name, Config) ->
@@ -42,8 +58,10 @@ end_per_group(Listener, _Config) ->
 
 init_dispatch(Name) ->
 	Opts = case Name of
-		ws ->        cowboy_test_ws:mkopts(cowboy_websocket);
-		ws_linger -> cowboy_test_ws:mkopts(cowboy_websocket_linger)
+		ws ->                cowboy_test_ws:mkopts(cowboy_websocket);
+		ws_linger ->         cowboy_test_ws:mkopts(cowboy_websocket_linger);
+		ws_deflate ->        cowboy_test_ws:mkopts(cowboy_websocket);
+		ws_linger_deflate -> cowboy_test_ws:mkopts(cowboy_websocket_linger)
 	end,
 	cowboy_router:compile([
 		{"localhost", [
@@ -74,6 +92,7 @@ init_dispatch(Name) ->
 			{"/ws_timeout_hibernate", ws_timeout_hibernate, Opts},
 			{"/ws_timeout_cancel", ws_timeout_cancel, Opts},
 			{"/ws_max_frame_size", ws_max_frame_size, Opts},
+			{"/ws_max_frame_size_deflate", ws_max_frame_size_deflate, Opts},
 			{"/ws_deflate_opts", ws_deflate_opts_h, Opts},
 			{"/ws_dont_validate_utf8", ws_dont_validate_utf8_h, Opts},
 			{"/ws_ping", ws_ping_h, Opts}
@@ -218,16 +237,136 @@ ws_deflate_max_frame_size_close(Config) ->
 		"Sec-WebSocket-Extensions: permessage-deflate\r\n", Config),
 	{_, "permessage-deflate"} = lists:keyfind("sec-websocket-extensions", 1, Headers),
 	Mask = 16#11223344,
-	Z = zlib:open(),
-	zlib:deflateInit(Z, best_compression, deflated, -15, 8, default),
-	CompressedData0 = iolist_to_binary(zlib:deflate(Z, <<0:800>>, sync)),
-	CompressedData = binary:part(CompressedData0, 0, byte_size(CompressedData0) - 4),
+	[CompressedData] = do_deflate_segments(best_compression, [<<0:800>>]),
 	MaskedData = do_mask(CompressedData, Mask, <<>>),
 	Len = byte_size(MaskedData),
 	true = Len < 8,
 	ok = gen_tcp:send(Socket, << 1:1, 1:1, 0:2, 1:4, 1:1, Len:7, Mask:32, MaskedData/binary >>),
-	{ok, << 1:1, 0:3, 8:4, 0:1, 2:7, 1009:16 >>} = gen_tcp:recv(Socket, 0, 6000),
+	{1, 0, 8, << 1009:16 >>} = do_recv_frame(Socket),
 	{error, closed} = gen_tcp:recv(Socket, 0, 6000),
+	ok.
+
+%% Message size limit checks for compressed messages delivered in several
+%% TCP segments.
+
+ws_deflate_segmented_close(Config) ->
+	doc("Server closes the connection with status code 1009 when a compressed "
+		"message delivered in several TCP segments decompresses beyond "
+		"max_frame_size."),
+	{ok, Socket, Headers} = do_handshake("/ws_max_frame_size_deflate",
+		"Sec-WebSocket-Extensions: permessage-deflate\r\n", Config),
+	{_, "permessage-deflate"} = lists:keyfind("sec-websocket-extensions", 1, Headers),
+	Mask = 16#11223344,
+	Payloads = [binary:copy(<<0>>, 50) || _ <- lists:seq(1, 3)],
+	Segments = do_deflate_segments(Payloads),
+	try
+		ok = do_start_inflate_probe(),
+		ok = do_send_segmented(Socket, Mask, Segments, Payloads, false),
+		{1, 0, 8, << 1009:16 >>} = do_recv_frame(Socket),
+		{error, closed} = gen_tcp:recv(Socket, 0, 6000)
+	after
+		do_stop_inflate_probe()
+	end,
+	ok.
+
+ws_deflate_segmented_at_limit(Config) ->
+	doc("Server delivers a compressed message that decompresses to exactly "
+		"max_frame_size when the client delivers it in several TCP segments."),
+	{ok, Socket, Headers} = do_handshake("/ws_max_frame_size_deflate",
+		"Sec-WebSocket-Extensions: permessage-deflate\r\n", Config),
+	{_, "permessage-deflate"} = lists:keyfind("sec-websocket-extensions", 1, Headers),
+	Mask = 16#11223344,
+	Payload = binary:copy(<<0>>, 100),
+	Payloads = [binary:part(Payload, 0, 50), binary:part(Payload, 50, 50)],
+	Segments = do_deflate_segments(Payloads),
+	try
+		ok = do_start_inflate_probe(),
+		ok = do_send_segmented(Socket, Mask, Segments, Payloads, true),
+		{1, 0, 2, Payload} = do_recv_frame(Socket)
+	after
+		do_stop_inflate_probe()
+	end,
+	ok.
+
+ws_deflate_segmented_mask(Config) ->
+	doc("Server delivers a compressed message unchanged when the client uses "
+		"a non-zero masking key and several TCP segments."),
+	{ok, Socket, Headers} = do_handshake("/ws_max_frame_size_deflate",
+		"Sec-WebSocket-Extensions: permessage-deflate\r\n", Config),
+	{_, "permessage-deflate"} = lists:keyfind("sec-websocket-extensions", 1, Headers),
+	Mask = 16#1a2b3c4d,
+	Payload = binary:copy(<<"abcdefghij">>, 4),
+	Payloads = [
+		binary:part(Payload, 0, 10),
+		binary:part(Payload, 10, 10),
+		binary:part(Payload, 20, 20)
+	],
+	Segments = do_deflate_segments(Payloads),
+	%% The masking offset is carried across the segment boundaries, so the
+	%% payload must be delivered byte for byte.
+	WireCumulative = do_cumulative([byte_size(Segment) || Segment <- Segments]),
+	DecompressedCumulative = do_cumulative([byte_size(P) || P <- Payloads]),
+	true = lists:any(
+		fun({Wire, Decompressed}) -> Wire rem 4 =/= Decompressed rem 4 end,
+		lists:zip(WireCumulative, DecompressedCumulative)
+	),
+	try
+		ok = do_start_inflate_probe(),
+		ok = do_send_segmented(Socket, Mask, Segments, Payloads, true),
+		{1, 0, 2, Payload} = do_recv_frame(Socket)
+	after
+		do_stop_inflate_probe()
+	end,
+	ok.
+
+ws_deflate_fragmented_close(Config) ->
+	doc("Server closes the connection when the joined size of a fragmented "
+		"compressed message decompresses beyond max_frame_size."),
+	{ok, Socket, Headers} = do_handshake("/ws_max_frame_size_deflate",
+		"Sec-WebSocket-Extensions: permessage-deflate\r\n", Config),
+	{_, "permessage-deflate"} = lists:keyfind("sec-websocket-extensions", 1, Headers),
+	Mask = 16#11223344,
+	Payloads = [binary:copy(<<0>>, 60), binary:copy(<<0>>, 60)],
+	[Segment1, Segment2] = do_deflate_segments(Payloads),
+	%% Opcode 2 starts a binary message with RSV1 set, opcode 0 continues it.
+	ok = do_send_frame(Socket, 0, 1, 2, Mask, Segment1),
+	ok = do_send_frame(Socket, 1, 0, 0, Mask, Segment2),
+	{1, 0, 8, << 1009:16 >>} = do_recv_frame(Socket),
+	{error, closed} = gen_tcp:recv(Socket, 0, 6000),
+	ok.
+
+ws_deflate_fragmented_ok(Config) ->
+	doc("Server delivers a fragmented compressed message when it decompresses "
+		"within max_frame_size, including when the last fragment is empty."),
+	{ok, Socket, Headers} = do_handshake("/ws_max_frame_size_deflate",
+		"Sec-WebSocket-Extensions: permessage-deflate\r\n", Config),
+	{_, "permessage-deflate"} = lists:keyfind("sec-websocket-extensions", 1, Headers),
+	Mask = 16#11223344,
+	Payload = binary:copy(<<"abcdefghij">>, 4),
+	Payloads = [binary:part(Payload, 0, 20), binary:part(Payload, 20, 20)],
+	[Segment1, Segment2] = do_deflate_segments(Payloads),
+	ok = do_send_frame(Socket, 0, 1, 2, Mask, Segment1),
+	ok = do_send_frame(Socket, 1, 0, 0, Mask, Segment2),
+	{1, 0, 2, Payload} = do_recv_frame(Socket),
+	%% Same message, but the whole compressed payload fits in the first
+	%% fragment and the last fragment carries no data.
+	[Segment3] = do_deflate_segments([Payload]),
+	ok = do_send_frame(Socket, 0, 1, 2, Mask, Segment3),
+	ok = do_send_frame(Socket, 1, 0, 0, Mask, <<>>),
+	{1, 0, 2, Payload} = do_recv_frame(Socket),
+	ok.
+
+ws_deflate_unlimited(Config) ->
+	doc("Server delivers a compressed message that decompresses beyond the "
+		"default limit when max_frame_size is infinity."),
+	{ok, Socket, Headers} = do_handshake("/ws_max_frame_size_deflate?infinity",
+		"Sec-WebSocket-Extensions: permessage-deflate\r\n", Config),
+	{_, "permessage-deflate"} = lists:keyfind("sec-websocket-extensions", 1, Headers),
+	Mask = 16#11223344,
+	Payload = binary:copy(<<0>>, 150),
+	[Segment] = do_deflate_segments([Payload]),
+	ok = do_send_frame(Socket, 1, 1, 2, Mask, Segment),
+	{1, 0, 2, Payload} = do_recv_frame(Socket),
 	ok.
 
 ws_deflate_opts_client_context_takeover(Config) ->
@@ -776,3 +915,116 @@ do_mask(<< O:8 >>, MaskKey, Acc) ->
 	<< MaskKey2:8, _:24 >> = << MaskKey:32 >>,
 	T = O bxor MaskKey2,
 	<< Acc/binary, T:8 >>.
+
+%% Send a binary message whose compressed payload is split in Segments. Each
+%% segment is sent only after the connection has decompressed the previous
+%% ones, which keeps the delivery order deterministic instead of depending on
+%% how TCP groups the writes. When AwaitLast is false the last segment is sent
+%% without waiting for it, for tests that expect the connection to close.
+do_send_segmented(Socket, Mask, Segments, Payloads, AwaitLast) ->
+	%% The payload is masked as a whole, so that the segments keep the mask
+	%% offset of the frame instead of restarting it.
+	MaskedWhole = do_mask(iolist_to_binary(Segments), Mask, <<>>),
+	Masked = do_split_lengths(MaskedWhole, [byte_size(Segment) || Segment <- Segments]),
+	Len = byte_size(MaskedWhole),
+	ok = gen_tcp:send(Socket,
+		<< 1:1, 1:1, 0:2, 2:4, 1:1, (do_length_bits(Len))/bitstring, Mask:32 >>),
+	do_send_segmented_loop(Masked, Payloads, undefined, 0, Socket, AwaitLast).
+
+do_send_segmented_loop([Masked|MaskedTail], [Payload|PayloadTail], Pid0, Acc0, Socket, AwaitLast) ->
+	ok = gen_tcp:send(Socket, Masked),
+	Acc = Acc0 + byte_size(Payload),
+	{Pid, Observed} = case AwaitLast orelse MaskedTail =/= [] of
+		true -> do_await_decompressed(Pid0, Acc0, Acc);
+		false -> {Pid0, Acc0}
+	end,
+	do_send_segmented_loop(MaskedTail, PayloadTail, Pid, Observed, Socket, AwaitLast);
+do_send_segmented_loop([], [], _, _, _, _) ->
+	ok.
+
+do_send_frame(Socket, Fin, Rsv, Opcode, Mask, Payload) ->
+	Masked = do_mask(Payload, Mask, <<>>),
+	Len = byte_size(Masked),
+	ok = gen_tcp:send(Socket,
+		<< Fin:1, Rsv:1, 0:2, Opcode:4, 1:1, (do_length_bits(Len))/bitstring, Mask:32, Masked/binary >>).
+
+%% Read one complete frame. A response can be split over several receives, so
+%% read the header first and then exactly the announced payload length.
+do_recv_frame(Socket) ->
+	{ok, << Fin:1, Rsv:1, 0:2, Opcode:4, 0:1, Len:7 >>} = gen_tcp:recv(Socket, 2, 6000),
+	PayloadLen =
+		case Len of
+			126 -> {ok, << L:16 >>} = gen_tcp:recv(Socket, 2, 6000), L;
+			127 -> {ok, << L:64 >>} = gen_tcp:recv(Socket, 8, 6000), L;
+			_ -> Len
+		end,
+	Payload =
+		case PayloadLen of
+			0 -> <<>>;
+			_ -> {ok, P} = gen_tcp:recv(Socket, PayloadLen, 6000), P
+		end,
+	{Fin, Rsv, Opcode, Payload}.
+
+do_length_bits(Len) when Len =< 125 ->
+	<< Len:7 >>;
+do_length_bits(Len) when Len =< 16#ffff ->
+	<< 126:7, Len:16 >>.
+
+do_split_lengths(<<>>, []) ->
+	[];
+do_split_lengths(Bin, [Len|Lengths]) ->
+	<< Part:Len/binary, Rest/binary >> = Bin,
+	[Part|do_split_lengths(Rest, Lengths)].
+
+%% Build permessage-deflate wire data for the given chunks, using one sync
+%% flush per chunk and dropping the trailing sync marker as RFC 7692 requires.
+do_deflate_segments(Chunks) ->
+	do_deflate_segments(default, Chunks).
+
+do_deflate_segments(Level, Chunks) ->
+	Z = zlib:open(),
+	try
+		zlib:deflateInit(Z, Level, deflated, -15, 8, default),
+		Encoded = [iolist_to_binary(zlib:deflate(Z, Chunk, sync)) || Chunk <- Chunks],
+		Last = lists:last(Encoded),
+		lists:droplast(Encoded) ++ [binary:part(Last, 0, byte_size(Last) - 4)]
+	after
+		zlib:close(Z)
+	end.
+
+do_cumulative(Values) ->
+	{_, Reversed} = lists:foldl(fun(Value, {Sum, Acc}) ->
+		Sum2 = Sum + Value,
+		{Sum2, [Sum2|Acc]}
+	end, {0, []}, Values),
+	lists:reverse(Reversed).
+
+%% The probe observes what the connection decompresses through the public
+%% cow_deflate API and never changes the result. It only provides the delivery
+%% barrier; the assertions stay on the frames the client receives.
+do_start_inflate_probe() ->
+	Tester = self(),
+	ok = meck:new(cow_deflate, [passthrough]),
+	ok = meck:expect(cow_deflate, inflate, fun(Z, Data, Limit) ->
+		Result = meck:passthrough([Z, Data, Limit]),
+		Tester ! {inflate_result, self(), Result},
+		Result
+	end),
+	ok.
+
+do_stop_inflate_probe() ->
+	meck:unload(cow_deflate),
+	ok.
+
+%% Wait until the connection has decompressed at least Target bytes in total.
+do_await_decompressed(Pid0, Acc0, Target) when Acc0 >= Target ->
+	{Pid0, Acc0};
+do_await_decompressed(Pid0, Acc0, Target) ->
+	receive
+		{inflate_result, Pid, {ok, Data}} when Pid0 =:= undefined; Pid =:= Pid0 ->
+			do_await_decompressed(Pid, Acc0 + byte_size(Data), Target);
+		{inflate_result, Pid, {error, Reason}} when Pid0 =:= undefined; Pid =:= Pid0 ->
+			ct:fail({unexpected_inflate_error, Reason})
+	after 6000 ->
+		ct:fail({inflate_progress_timeout, Acc0, Target})
+	end.
