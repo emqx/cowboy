@@ -26,9 +26,10 @@ endif
 
 DOC_DEPS = asciideck
 
-TEST_DEPS = $(if $(CI_ERLANG_MK),ci.erlang.mk) ct_helper gun
+TEST_DEPS = $(if $(CI_ERLANG_MK),ci.erlang.mk) ct_helper gun meck
 dep_ct_helper = git https://github.com/extend/ct_helper 9df44e96150dd0eb17e86a2589e3531b0f4305d2
 dep_gun = git https://github.com/ninenines/gun 2.1.0
+dep_meck = hex 1.1.0
 
 # CI configuration.
 
