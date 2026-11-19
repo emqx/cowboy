@@ -171,7 +171,7 @@ logger (error_logger)::
 
 The module that will be used to write log messages.
 
-max_concurrent_streams (infinity)::
+max_concurrent_streams (100)::
 
 Maximum number of concurrent streams allowed on the connection.
 
@@ -327,6 +327,7 @@ too many `WINDOW_UPDATE` frames.
 == Changelog
 
 * *2.21*: The `max_header_list_size` option was added.
+* *2.17*: The `max_concurrent_streams` option now defaults to 100.
 * *2.13*: The `inactivity_timeout` option was deprecated.
 * *2.13*: The `active_n` default value was changed to `1`.
 * *2.13*: The `dynamic_buffer` and `hibernate` options were added.

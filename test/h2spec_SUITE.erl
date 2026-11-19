@@ -35,7 +35,6 @@ init_per_suite(Config) ->
 				true ->
 					cowboy_test:init_http(h2spec, #{
 						env => #{dispatch => init_dispatch()},
-						max_concurrent_streams => 100,
 						%% This test suite expects an HTTP/2-only connection.
 						protocols => [http2],
 						%% Disable the DATA threshold for this test suite.
