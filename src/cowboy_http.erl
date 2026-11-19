@@ -80,6 +80,8 @@
 	qs = undefined :: binary(),
 	version = undefined :: cowboy:http_version(),
 	headers = undefined :: cowboy:http_headers() | undefined,
+	%% Number of header lines received, including duplicates.
+	num_headers = 0 :: non_neg_integer(),
 	name = undefined :: binary() | undefined
 }).
 
@@ -645,9 +647,8 @@ parse_header(Rest, State=#state{in_state=PS}, Headers) when byte_size(Rest) < 2 
 	{more, State#state{buffer=Rest, in_state=PS#ps_header{headers=Headers}}};
 parse_header(<< $\r, $\n, Rest/bits >>, S, Headers) ->
 	request(Rest, S, Headers);
-parse_header(Buffer, State=#state{opts=Opts, in_state=PS}, Headers) ->
+parse_header(Buffer, State=#state{opts=Opts, in_state=PS=#ps_header{num_headers=NumHeaders}}, Headers) ->
 	MaxHeaders = maps:get(max_headers, Opts, 100),
-	NumHeaders = maps:size(Headers),
 	if
 		NumHeaders >= MaxHeaders ->
 			error_terminate(431, State#state{in_state=PS#ps_header{headers=Headers}},
@@ -716,7 +717,8 @@ parse_hd_before_value(Buffer, State=#state{opts=Opts, in_state=PS}, H, N) ->
 			parse_hd_value(Buffer, State, H, N, <<>>)
 	end.
 
-parse_hd_value(<< $\r, $\n, Rest/bits >>, S, Headers0, Name, SoFar) ->
+parse_hd_value(<< $\r, $\n, Rest/bits >>, S=#state{in_state=PS=#ps_header{num_headers=Num}},
+		Headers0, Name, SoFar) ->
 	Value = clean_value_ws_end(SoFar, byte_size(SoFar) - 1),
 	Headers = case maps:get(Name, Headers0, undefined) of
 		undefined -> Headers0#{Name => Value};
@@ -724,7 +726,7 @@ parse_hd_value(<< $\r, $\n, Rest/bits >>, S, Headers0, Name, SoFar) ->
 		Value0 when Name =:= <<"cookie">> -> Headers0#{Name => << Value0/binary, "; ", Value/binary >>};
 		Value0 -> Headers0#{Name => << Value0/binary, ", ", Value/binary >>}
 	end,
-	parse_header(Rest, S, Headers);
+	parse_header(Rest, S#state{in_state=PS#ps_header{num_headers=Num + 1}}, Headers);
 parse_hd_value(<< C, Rest/bits >>, S, H, N, SoFar) ->
 	parse_hd_value(Rest, S, H, N, << SoFar/binary, C >>).
 
