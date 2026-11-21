@@ -118,12 +118,12 @@ inactivity_timeout (300000)::
 
 invalid_response_headers (error_terminate)::
 
-Prevent sending HTTP responses with invalid response headers.
-The default `error_terminate` will result in an HTTP 500
-response sent when invalid response headers are detected,
-except when the invalid headers are trailer headers: in that
-case the connection is dropped. When set to `ignore` the
-check is not performed at all: use at your own risk.
+The default `error_terminate` rejects response header values containing
+CR or LF, including headers returned by a stream handler's `early_error/5`
+callback. Cowboy sends an empty HTTP 500 response and closes the connection.
+If it can no longer send a response for that stream, or if it detects an
+invalid trailer, it closes the connection immediately. Set this option to
+`ignore` to disable the check.
 
 initial_stream_flow_size (65535)::
 

@@ -24,6 +24,10 @@ init(StreamID, Req, Opts) ->
 	Pid ! {Pid, self(), init, StreamID, Req, Opts},
 	{init_commands(StreamID, Req, State), State}.
 
+init_commands(_, _, #state{test=invalid_early_response_headers}) ->
+	error(crash);
+init_commands(_, _, #state{test=invalid_final_response_headers}) ->
+	[{response, 200, #{<<"x-test">> => <<"invalid\nvalue">>}, <<>>}];
 init_commands(_, _, #state{test=crash_in_init}) ->
 	error(crash);
 init_commands(_, _, #state{test=crash_in_data}) ->
@@ -92,6 +96,8 @@ data(StreamID, IsFin, Data, State=#state{pid=Pid}) ->
 	Pid ! {Pid, self(), data, StreamID, IsFin, Data, State},
 	{[], State}.
 
+info(_, {response, 500, Headers, Body}, State=#state{test=invalid_final_response_headers}) ->
+	{[{response, 503, Headers, Body}], State};
 info(_, Resp={response, _, _, _}, State) ->
 	{[Resp], State};
 info(_, crash, #state{test=crash_in_info}) ->
@@ -115,6 +121,8 @@ early_error(StreamID, Reason, PartialReq, Resp, Opts) ->
 	Pid = list_to_pid(binary_to_list(cowboy_req:header(<<"x-test-pid">>, PartialReq))),
 	Pid ! {Pid, self(), early_error, StreamID, Reason, PartialReq, Resp, Opts},
 	case cowboy_req:header(<<"x-test-case">>, PartialReq) of
+		<<"invalid_early_response_headers">> ->
+			{response, 503, #{<<"x-test">> => <<"invalid\nvalue">>}, <<>>};
 		<<"crash_in_early_error",_/bits>> -> error(crash);
 		_ -> Resp
 	end.

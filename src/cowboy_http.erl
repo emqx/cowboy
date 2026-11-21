@@ -1094,14 +1094,8 @@ commands(State, StreamID, [{error_response, _, _, _}|Tail]) ->
 %% Send an informational response.
 commands(State0=#state{socket=Socket, transport=Transport, out_state=wait, streams=Streams},
 		StreamID, [{inform, StatusCode, Headers}|Tail]) ->
-	case maybe_invalid_response_headers(Headers, State0) of
-		error_terminate ->
-			Reason = {internal_error, invalid_response_header,
-				'An invalid response header was detected in an informational response.'},
-			terminate(stream_terminate(State0, StreamID, Reason), Reason);
-		ok ->
-			ok
-	end,
+	check_response_headers(State0, StreamID, Headers,
+		'An invalid response header was detected in an informational response.'),
 	%% @todo I'm pretty sure the last stream in the list is the one we want
 	%% considering all others are queued.
 	#stream{version=Version} = lists:keyfind(StreamID, #stream.id, Streams),
@@ -1122,14 +1116,8 @@ commands(State0=#state{socket=Socket, transport=Transport, out_state=wait, strea
 %% @todo Same two things above apply to DATA, possibly promise too.
 commands(State0=#state{socket=Socket, transport=Transport, out_state=wait, streams=Streams}, StreamID,
 		[{response, StatusCode, Headers0, Body}|Tail]) ->
-	case maybe_invalid_response_headers(Headers0, State0) of
-		error_terminate ->
-			Reason = {internal_error, invalid_response_header,
-				'An invalid response header was detected.'},
-			terminate(stream_terminate(State0, StreamID, Reason), Reason);
-		ok ->
-			ok
-	end,
+	check_response_headers(State0, StreamID, Headers0,
+		'An invalid response header was detected.'),
 	%% @todo I'm pretty sure the last stream in the list is the one we want
 	%% considering all others are queued.
 	#stream{version=Version} = lists:keyfind(StreamID, #stream.id, Streams),
@@ -1151,14 +1139,8 @@ commands(State0=#state{socket=Socket, transport=Transport, out_state=wait, strea
 commands(State0=#state{socket=Socket, transport=Transport,
 		opts=Opts, overriden_opts=Override, streams=Streams0, out_state=OutState},
 		StreamID, [{headers, StatusCode, Headers0}|Tail]) ->
-	case maybe_invalid_response_headers(Headers0, State0) of
-		error_terminate ->
-			Reason = {internal_error, invalid_response_header,
-				'An invalid response header was detected.'},
-			terminate(stream_terminate(State0, StreamID, Reason), Reason);
-		ok ->
-			ok
-	end,
+	check_response_headers(State0, StreamID, Headers0,
+		'An invalid response header was detected.'),
 	%% @todo Same as above (about the last stream in the list).
 	Stream = #stream{version=Version} = lists:keyfind(StreamID, #stream.id, Streams0),
 	Status = cow_http:status_to_integer(StatusCode),
@@ -1294,14 +1276,8 @@ commands(State0=#state{socket=Socket, transport=Transport, streams=Streams, out_
 commands(State0=#state{ref=Ref, parent=Parent, socket=Socket, transport=Transport,
 		out_state=OutState, buffer=Buffer, children=Children}, StreamID,
 		[{switch_protocol, Headers, Protocol, InitialState}|_Tail]) ->
-	case maybe_invalid_response_headers(Headers, State0) of
-		error_terminate ->
-			Reason = {internal_error, invalid_response_header,
-				'An invalid response header was detected when switching protocol.'},
-			terminate(stream_terminate(State0, StreamID, Reason), Reason);
-		ok ->
-			ok
-	end,
+	check_response_headers(State0, StreamID, Headers,
+		'An invalid response header was detected when switching protocol.'),
 	%% @todo If there's streams opened after this one, fail instead of 101.
 	State1 = cancel_timeout(State0),
 	%% Before we send the 101 response we need to stop receiving data
@@ -1355,6 +1331,23 @@ commands(State=#state{opts=Opts}, StreamID, [Log={log, _, _, _}|Tail]) ->
 %% HTTP/1.1 does not support push; ignore.
 commands(State, StreamID, [{push, _, _, _, _, _, _, _}|Tail]) ->
 	commands(State, StreamID, Tail).
+
+check_response_headers(State, StreamID, Headers, Human) ->
+	case maybe_invalid_response_headers(Headers, State) of
+		ok -> ok;
+		error_terminate ->
+			%% Send the fallback directly: a stream handler may change every response.
+			case State of
+				#state{out_state=wait, out_streamid=StreamID, socket=Socket, transport=Transport} ->
+					ok = maybe_socket_error(State, Transport:send(Socket,
+						cow_http:response(500, 'HTTP/1.1', [
+							{<<"content-length">>, <<"0">>},
+							{<<"connection">>, <<"close">>}
+						])));
+				_ -> ok
+			end,
+			terminate(State, {internal_error, invalid_response_header, Human})
+	end.
 
 maybe_invalid_response_headers(Headers, #state{opts=Opts}) ->
 	case maps:get(invalid_response_headers, Opts, error_terminate) of
@@ -1597,11 +1590,14 @@ early_error(StatusCode, State, Reason, PartialReq) ->
 	early_error(StatusCode, State, Reason, PartialReq, #{}).
 
 early_error(StatusCode0, State=#state{socket=Socket, transport=Transport,
-		opts=Opts, in_streamid=StreamID}, Reason, PartialReq, RespHeaders0) ->
+		opts=Opts, in_streamid=InStreamID}, Reason, PartialReq, RespHeaders0) ->
+	StreamID = maps:get(streamid, PartialReq, InStreamID),
 	RespHeaders1 = RespHeaders0#{<<"content-length">> => <<"0">>},
 	Resp = {response, StatusCode0, RespHeaders1, <<>>},
 	try cowboy_stream:early_error(StreamID, Reason, PartialReq, Resp, Opts) of
 		{response, StatusCode, RespHeaders, RespBody} ->
+			check_response_headers(State, StreamID, RespHeaders,
+				'An invalid response header was detected in an early error response.'),
 			ok = maybe_socket_error(State,
 				Transport:send(Socket, [
 					cow_http:response(StatusCode, 'HTTP/1.1', maps:to_list(RespHeaders)),

@@ -491,6 +491,27 @@ do_idle_timeout_recv_loop(Ref, Pid, ConnPid, StreamRef, ExpectCompletion) ->
 	      error(timeout)
 	end.
 
+invalid_response_headers_fallback(Config) ->
+	doc("Rejected response headers produce a fixed 500 and close the connection."),
+	{ok, _} = cowboy:start_clear(?FUNCTION_NAME, [{port, 0}], #{
+		stream_handlers => [stream_handler_h]
+	}),
+	Port = ranch:get_port(?FUNCTION_NAME),
+	try
+		[begin
+			Client = raw_open([{type, tcp}, {port, Port}, {opts, []}|Config]),
+			ok = raw_send(Client, ["GET / HTTP/1.1\r\nhost: localhost\r\nx-test-pid: ",
+				pid_to_list(self()), "\r\nx-test-case: ", Case, "\r\n\r\n"]),
+			{'HTTP/1.1', 500, _, Rest} = cow_http:parse_status_line(raw_recv_head(Client)),
+			{Headers, <<>>} = cow_http:parse_headers(Rest),
+			#{<<"content-length">> := <<"0">>, <<"connection">> := <<"close">>} = maps:from_list(Headers),
+			{error, closed} = raw_recv(Client, 1, 1000)
+		end || Case <- ["invalid_early_response_headers", "invalid_final_response_headers"]],
+		ok
+	after
+		cowboy:stop_listener(?FUNCTION_NAME)
+	end.
+
 invalid_response_headers_inform(Config) ->
 	doc("Ensure invalid response headers are rejected by default."),
 	Dispatch = cowboy_router:compile([{'_', [
