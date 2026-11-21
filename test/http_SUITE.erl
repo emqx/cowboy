@@ -28,6 +28,8 @@
 -import(cowboy_test, [raw_recv/3]).
 -import(cowboy_test, [raw_expect_recv/2]).
 
+-include_lib("stdlib/include/assert.hrl").
+
 all() ->
 	[{group, clear_no_parallel}, {group, clear}].
 
@@ -487,6 +489,250 @@ do_idle_timeout_recv_loop(Ref, Pid, ConnPid, StreamRef, ExpectCompletion) ->
 			 ok
 	after 2000 ->
 	      error(timeout)
+	end.
+
+invalid_response_headers_fallback(Config) ->
+	doc("Rejected response headers produce a fixed 500 and close the connection."),
+	{ok, _} = cowboy:start_clear(?FUNCTION_NAME, [{port, 0}], #{
+		stream_handlers => [stream_handler_h]
+	}),
+	Port = ranch:get_port(?FUNCTION_NAME),
+	try
+		[begin
+			Client = raw_open([{type, tcp}, {port, Port}, {opts, []}|Config]),
+			ok = raw_send(Client, ["GET / HTTP/1.1\r\nhost: localhost\r\nx-test-pid: ",
+				pid_to_list(self()), "\r\nx-test-case: ", Case, "\r\n\r\n"]),
+			{'HTTP/1.1', 500, _, Rest} = cow_http:parse_status_line(raw_recv_head(Client)),
+			{Headers, <<>>} = cow_http:parse_headers(Rest),
+			#{<<"content-length">> := <<"0">>, <<"connection">> := <<"close">>} = maps:from_list(Headers),
+			{error, closed} = raw_recv(Client, 1, 1000)
+		end || Case <- ["invalid_early_response_headers", "invalid_final_response_headers"]],
+		ok
+	after
+		cowboy:stop_listener(?FUNCTION_NAME)
+	end.
+
+invalid_response_headers_inform(Config) ->
+	doc("Ensure invalid response headers are rejected by default."),
+	Dispatch = cowboy_router:compile([{'_', [
+		{"/inform", resp_invalid_headers_h, []}
+	]}]),
+	{ok, _} = cowboy:start_clear(?FUNCTION_NAME, [{port, 0}], #{
+		env => #{dispatch => Dispatch}
+	}),
+	Port = ranch:get_port(?FUNCTION_NAME),
+	try
+		Request = "GET /inform HTTP/1.1\r\nhost: localhost\r\n\r\n",
+		Client = raw_open([{type, tcp}, {port, Port}, {opts, []}|Config]),
+		ok = raw_send(Client, Request),
+		{'HTTP/1.1', 500, _, Rest} = cow_http:parse_status_line(raw_recv_head(Client)),
+		{_, _} = cow_http:parse_headers(Rest),
+		ok
+	after
+		cowboy:stop_listener(?FUNCTION_NAME)
+	end.
+
+invalid_response_headers_inform_ignore(Config) ->
+	doc("Ensure invalid response headers are sent "
+		"when allowed by configuration."),
+	Dispatch = cowboy_router:compile([{'_', [
+		{"/inform", resp_invalid_headers_h, []}
+	]}]),
+	{ok, _} = cowboy:start_clear(?FUNCTION_NAME, [{port, 0}], #{
+		env => #{dispatch => Dispatch},
+		invalid_response_headers => ignore
+	}),
+	Port = ranch:get_port(?FUNCTION_NAME),
+	try
+		Request = "GET /inform HTTP/1.1\r\nhost: localhost\r\n\r\n",
+		Client = raw_open([{type, tcp}, {port, Port}, {opts, []}|Config]),
+		ok = raw_send(Client, Request),
+		{'HTTP/1.1', 100, _, Rest} = cow_http:parse_status_line(raw_recv_head(Client)),
+		?assertError(function_clause, cow_http:parse_headers(Rest),
+			"Invalid header goes through."),
+		{'HTTP/1.1', 200, _, _} = cow_http:parse_status_line(raw_recv_head(Client)),
+		ok
+	after
+		cowboy:stop_listener(?FUNCTION_NAME)
+	end.
+
+invalid_response_headers_reply(Config) ->
+	doc("Ensure invalid response headers are rejected by default."),
+	Dispatch = cowboy_router:compile([{'_', [
+		{"/reply", resp_invalid_headers_h, []}
+	]}]),
+	{ok, _} = cowboy:start_clear(?FUNCTION_NAME, [{port, 0}], #{
+		env => #{dispatch => Dispatch}
+	}),
+	Port = ranch:get_port(?FUNCTION_NAME),
+	try
+		Request = "GET /reply HTTP/1.1\r\nhost: localhost\r\n\r\n",
+		Client = raw_open([{type, tcp}, {port, Port}, {opts, []}|Config]),
+		ok = raw_send(Client, Request),
+		{'HTTP/1.1', 500, _, Rest} = cow_http:parse_status_line(raw_recv_head(Client)),
+		{_, _} = cow_http:parse_headers(Rest),
+		ok
+	after
+		cowboy:stop_listener(?FUNCTION_NAME)
+	end.
+
+invalid_response_headers_reply_ignore(Config) ->
+	doc("Ensure invalid response headers are sent "
+		"when allowed by configuration."),
+	Dispatch = cowboy_router:compile([{'_', [
+		{"/reply", resp_invalid_headers_h, []}
+	]}]),
+	{ok, _} = cowboy:start_clear(?FUNCTION_NAME, [{port, 0}], #{
+		env => #{dispatch => Dispatch},
+		invalid_response_headers => ignore
+	}),
+	Port = ranch:get_port(?FUNCTION_NAME),
+	try
+		Request = "GET /reply HTTP/1.1\r\nhost: localhost\r\n\r\n",
+		Client = raw_open([{type, tcp}, {port, Port}, {opts, []}|Config]),
+		ok = raw_send(Client, Request),
+		{'HTTP/1.1', 200, _, Rest} = cow_http:parse_status_line(raw_recv_head(Client)),
+		?assertError(function_clause, cow_http:parse_headers(Rest),
+			"Invalid header goes through.")
+	after
+		cowboy:stop_listener(?FUNCTION_NAME)
+	end.
+
+invalid_response_headers_stream_reply(Config) ->
+	doc("Ensure invalid response headers are rejected by default."),
+	Dispatch = cowboy_router:compile([{'_', [
+		{"/stream_reply", resp_invalid_headers_h, []}
+	]}]),
+	{ok, _} = cowboy:start_clear(?FUNCTION_NAME, [{port, 0}], #{
+		env => #{dispatch => Dispatch},
+		invalid_response_headers => error_terminate
+	}),
+	Port = ranch:get_port(?FUNCTION_NAME),
+	try
+		Request = "GET /stream_reply HTTP/1.1\r\nhost: localhost\r\n\r\n",
+		Client = raw_open([{type, tcp}, {port, Port}, {opts, []}|Config]),
+		ok = raw_send(Client, Request),
+		{'HTTP/1.1', 500, _, Rest} = cow_http:parse_status_line(raw_recv_head(Client)),
+		{_, _} = cow_http:parse_headers(Rest),
+		ok
+	after
+		cowboy:stop_listener(?FUNCTION_NAME)
+	end.
+
+invalid_response_headers_stream_reply_ignore(Config) ->
+	doc("Ensure invalid response headers are sent "
+		"when allowed by configuration."),
+	Dispatch = cowboy_router:compile([{'_', [
+		{"/stream_reply", resp_invalid_headers_h, []}
+	]}]),
+	{ok, _} = cowboy:start_clear(?FUNCTION_NAME, [{port, 0}], #{
+		env => #{dispatch => Dispatch},
+		invalid_response_headers => ignore
+	}),
+	Port = ranch:get_port(?FUNCTION_NAME),
+	try
+		Request = "GET /stream_reply HTTP/1.1\r\nhost: localhost\r\n\r\n",
+		Client = raw_open([{type, tcp}, {port, Port}, {opts, []}|Config]),
+		ok = raw_send(Client, Request),
+		{'HTTP/1.1', 200, _, Rest} = cow_http:parse_status_line(raw_recv_head(Client)),
+		?assertError(function_clause, cow_http:parse_headers(Rest),
+			"Invalid header goes through.")
+	after
+		cowboy:stop_listener(?FUNCTION_NAME)
+	end.
+
+invalid_response_headers_stream_trailers(Config) ->
+	doc("Ensure invalid response headers are rejected by default."),
+	Dispatch = cowboy_router:compile([{'_', [
+		{"/stream_trailers", resp_invalid_headers_h, []}
+	]}]),
+	{ok, _} = cowboy:start_clear(?FUNCTION_NAME, [{port, 0}], #{
+		env => #{dispatch => Dispatch},
+		invalid_response_headers => error_terminate
+	}),
+	Port = ranch:get_port(?FUNCTION_NAME),
+	try
+		Request = "GET /stream_trailers HTTP/1.1\r\nhost: localhost\r\n"
+			"te: trailers\r\n\r\n",
+		Client = raw_open([{type, tcp}, {port, Port}, {opts, []}|Config]),
+		ok = raw_send(Client, Request),
+		{'HTTP/1.1', 200, _, Rest0} = cow_http:parse_status_line(raw_recv_head(Client)),
+		{Headers, <<>>} = cow_http:parse_headers(Rest0),
+		{_, _} = lists:keyfind(<<"trailer">>, 1, Headers),
+		{ok, <<"2\r\nOK\r\n">>} = raw_recv(Client, 0, 1000),
+		%% Connection should be closed without trailers.
+		{error, closed} = raw_recv(Client, 0, 1000)
+	after
+		cowboy:stop_listener(?FUNCTION_NAME)
+	end.
+
+invalid_response_headers_stream_trailers_ignore(Config) ->
+	doc("Ensure invalid response headers are sent "
+		"when allowed by configuration."),
+	Dispatch = cowboy_router:compile([{'_', [
+		{"/stream_trailers", resp_invalid_headers_h, []}
+	]}]),
+	{ok, _} = cowboy:start_clear(?FUNCTION_NAME, [{port, 0}], #{
+		env => #{dispatch => Dispatch},
+		invalid_response_headers => ignore
+	}),
+	Port = ranch:get_port(?FUNCTION_NAME),
+	try
+		Request = "GET /stream_trailers HTTP/1.1\r\nhost: localhost\r\n"
+			"te: trailers\r\n\r\n",
+		Client = raw_open([{type, tcp}, {port, Port}, {opts, []}|Config]),
+		ok = raw_send(Client, Request),
+		{'HTTP/1.1', 200, _, Rest0} = cow_http:parse_status_line(raw_recv_head(Client)),
+		{Headers, <<>>} = cow_http:parse_headers(Rest0),
+		{_, _} = lists:keyfind(<<"trailer">>, 1, Headers),
+		{ok, <<"2\r\nOK\r\n">>} = raw_recv(Client, 0, 1000),
+		{ok, Rest1} = raw_recv(Client, 0, 1000),
+		?assertError(function_clause, cow_http:parse_headers(Rest1),
+			"Invalid header goes through.")
+	after
+		cowboy:stop_listener(?FUNCTION_NAME)
+	end.
+
+invalid_response_headers_switch_protocol(Config) ->
+	doc("Ensure invalid response headers are rejected by default."),
+	Dispatch = cowboy_router:compile([{'_', [
+		{"/switch_protocol", resp_invalid_headers_h, []}
+	]}]),
+	{ok, _} = cowboy:start_clear(?FUNCTION_NAME, [{port, 0}], #{
+		env => #{dispatch => Dispatch}
+	}),
+	Port = ranch:get_port(?FUNCTION_NAME),
+	try
+		Request = "GET /switch_protocol HTTP/1.1\r\nhost: localhost\r\n\r\n",
+		Client = raw_open([{type, tcp}, {port, Port}, {opts, []}|Config]),
+		ok = raw_send(Client, Request),
+		{'HTTP/1.1', 500, _, Rest} = cow_http:parse_status_line(raw_recv_head(Client)),
+		{_, _} = cow_http:parse_headers(Rest),
+		ok
+	after
+		cowboy:stop_listener(?FUNCTION_NAME)
+	end.
+
+invalid_response_headers_switch_protocol_ignore(Config) ->
+	doc("Ensure invalid response headers are sent "
+		"when allowed by configuration."),
+	Dispatch = cowboy_router:compile([{'_', [
+		{"/switch_protocol", resp_invalid_headers_h, []}
+	]}]),
+	{ok, _} = cowboy:start_clear(?FUNCTION_NAME, [{port, 0}], #{
+		env => #{dispatch => Dispatch},
+		invalid_response_headers => ignore
+	}),
+	Port = ranch:get_port(?FUNCTION_NAME),
+	try
+		Request = "GET /switch_protocol HTTP/1.1\r\nhost: localhost\r\n\r\n",
+		Client = raw_open([{type, tcp}, {port, Port}, {opts, []}|Config]),
+		ok = raw_send(Client, Request),
+		{'HTTP/1.1', 101, _, Rest} = cow_http:parse_status_line(raw_recv_head(Client)),
+		?assertError(function_clause, cow_http:parse_headers(Rest),
+			"Invalid header goes through.")
+	after
+		cowboy:stop_listener(?FUNCTION_NAME)
 	end.
 
 persistent_term_router(Config) ->

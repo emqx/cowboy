@@ -16,7 +16,7 @@ CT_OPTS += -ct_hooks cowboy_ct_hook [] # -boot start_sasl
 LOCAL_DEPS = crypto
 
 DEPS = cowlib ranch
-dep_cowlib = git https://github.com/ninenines/cowlib 2.14.0
+dep_cowlib = git https://github.com/ninenines/cowlib 2.22.0
 dep_ranch = git https://github.com/ninenines/ranch 1.8.1
 
 ifeq ($(COWBOY_QUICER),1)
@@ -28,7 +28,7 @@ DOC_DEPS = asciideck
 
 TEST_DEPS = $(if $(CI_ERLANG_MK),ci.erlang.mk) ct_helper gun meck
 dep_ct_helper = git https://github.com/extend/ct_helper 9df44e96150dd0eb17e86a2589e3531b0f4305d2
-dep_gun = git https://github.com/ninenines/gun 2.1.0
+dep_gun = git https://github.com/ninenines/gun 2.8.0
 dep_meck = hex 1.1.0
 
 # CI configuration.
@@ -54,7 +54,7 @@ define HEX_TARBALL_EXTRA_METADATA
 endef
 
 hex_req_ranch = >= 1.8.0 and < 3.0.0
-hex_req_cowlib = >= 2.14.0 and < 3.0.0
+hex_req_cowlib = >= 2.22.0 and < 3.0.0
 
 # Standard targets.
 

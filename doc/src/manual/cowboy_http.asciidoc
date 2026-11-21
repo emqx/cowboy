@@ -27,6 +27,7 @@ opts() :: #{
     idle_timeout               => timeout(),
     inactivity_timeout         => timeout(),
     initial_stream_flow_size   => non_neg_integer(),
+    invalid_response_headers   => error_terminate | ignore,
     linger_timeout             => timeout(),
     logger                     => module(),
     max_empty_lines            => non_neg_integer(),
@@ -115,6 +116,15 @@ inactivity_timeout (300000)::
 
 **DEPRECATED** Time in ms with nothing received at all before Cowboy closes the connection.
 
+invalid_response_headers (error_terminate)::
+
+The default `error_terminate` rejects response header values containing
+CR or LF, including headers returned by a stream handler's `early_error/5`
+callback. Cowboy sends an empty HTTP 500 response and closes the connection.
+If it can no longer send a response for that stream, or if it detects an
+invalid trailer, it closes the connection immediately. Set this option to
+`ignore` to disable the check.
+
 initial_stream_flow_size (65535)::
 
 Amount of data in bytes Cowboy will read from the socket
@@ -198,6 +208,7 @@ Ordered list of stream handlers that will handle all stream events.
 
 == Changelog
 
+* *2.16*: The `invalid_response_headers` option was added.
 * *2.13*: The `inactivity_timeout` option was deprecated.
 * *2.13*: The `active_n` default value was changed to `1`.
 * *2.13*: The `dynamic_buffer` and `hibernate` options were added.

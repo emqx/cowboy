@@ -947,6 +947,7 @@ unicode_basic_error(Config) ->
 	end,
 	_ = [case do_get("/char/" ++ [C], Config) of
 		{400, _, _} -> ok;
+		{stream_error, protocol_error, _} -> ok;
 		Error -> exit({error, C, Error})
 	end || C <- (config(chars, Config) -- Exclude) --
 		"abcdefghijklmnopqrstuvwxyz"

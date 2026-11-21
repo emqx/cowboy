@@ -41,6 +41,7 @@ opts() :: #{
     max_fragmented_header_block_size => 16384..16#7fffffff,
     max_frame_size_received        => 16384..16777215,
     max_frame_size_sent            => 16384..16777215 | infinity,
+    max_header_list_size           => 0..16#ffffffff | infinity,
     max_received_frame_rate        => {pos_integer(), timeout()},
     max_reset_stream_rate          => {pos_integer(), timeout()},
     max_cancel_stream_rate         => {pos_integer(), timeout()},
@@ -170,7 +171,7 @@ logger (error_logger)::
 
 The module that will be used to write log messages.
 
-max_concurrent_streams (infinity)::
+max_concurrent_streams (100)::
 
 Maximum number of concurrent streams allowed on the connection.
 
@@ -226,6 +227,10 @@ following the client's advertised maximum.
 +
 Note that actual frame sizes may be lower than the limit when
 there is not enough space left in the flow control window.
+
+max_header_list_size (32768)::
+
+Maximum size of the header fields block.
 
 max_received_frame_rate ({10000, 10000})::
 
@@ -321,6 +326,8 @@ too many `WINDOW_UPDATE` frames.
 
 == Changelog
 
+* *2.21*: The `max_header_list_size` option was added.
+* *2.17*: The `max_concurrent_streams` option now defaults to 100.
 * *2.13*: The `inactivity_timeout` option was deprecated.
 * *2.13*: The `active_n` default value was changed to `1`.
 * *2.13*: The `dynamic_buffer` and `hibernate` options were added.

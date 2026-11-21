@@ -74,7 +74,9 @@ reject_handshake_when_disabled(Config0) ->
 		"PROTOCOL_ERROR stream error when enable_connect_protocol=false. (draft-01 3)"),
 	Config = cowboy_test:init_http(disabled, #{
 		enable_connect_protocol => false,
-		env => #{dispatch => cowboy_router:compile(init_routes(Config0))}
+		env => #{dispatch => cowboy_router:compile(init_routes(Config0))},
+		max_concurrent_streams => infinity,
+		max_header_list_size => infinity
 	}, Config0),
 	%% Connect to server and confirm that SETTINGS_ENABLE_CONNECT_PROTOCOL = 0.
 	{ok, Socket, Settings} = do_handshake(Config),
@@ -101,7 +103,9 @@ reject_handshake_disabled_by_default(Config0) ->
 	doc("Extended CONNECT requests MUST be rejected with a "
 		"PROTOCOL_ERROR stream error with default enable_connect_protocol. (draft-01 3)"),
 	Config = cowboy_test:init_http(disabled_by_default, #{
-		env => #{dispatch => cowboy_router:compile(init_routes(Config0))}
+		env => #{dispatch => cowboy_router:compile(init_routes(Config0))},
+		max_concurrent_streams => infinity,
+		max_header_list_size => infinity
 	}, Config0),
 	%% Connect to server and confirm that SETTINGS_ENABLE_CONNECT_PROTOCOL = 0.
 	{ok, Socket, Settings} = do_handshake(Config),
@@ -199,8 +203,9 @@ reject_unknown_pseudo_header_protocol(Config) ->
 
 reject_invalid_pseudo_header_protocol(Config) ->
 	%% @todo This probably shouldn't send 400 but 501 instead based on RFC 9220.
-	doc("An extended CONNECT request with an invalid protocol must be rejected "
-		"with a 400 error. (draft-01 4)"),
+	doc("An extended CONNECT request with an invalid :protocol component "
+		"must be rejected with a PROTOCOL_ERROR stream error. "
+		"(draft-01 4, RFC7540 8.1.2.6)"),
 	%% Connect to server and confirm that SETTINGS_ENABLE_CONNECT_PROTOCOL = 1.
 	{ok, Socket, Settings} = do_handshake(Config),
 	#{enable_connect_protocol := true} = Settings,
@@ -215,11 +220,52 @@ reject_invalid_pseudo_header_protocol(Config) ->
 		{<<"origin">>, <<"http://localhost">>}
 	]),
 	ok = gen_tcp:send(Socket, cow_http2:headers(1, nofin, ReqHeadersBlock)),
-	%% Receive a 400 response.
-	{ok, << Len1:24, 1:8, _:8, 1:32 >>} = gen_tcp:recv(Socket, 9, 1000),
-	{ok, RespHeadersBlock} = gen_tcp:recv(Socket, Len1, 1000),
-	{RespHeaders, _} = cow_hpack:decode(RespHeadersBlock),
-	{_, <<"501">>} = lists:keyfind(<<":status">>, 1, RespHeaders),
+	%% Receive a PROTOCOL_ERROR stream error.
+	{ok, << _:24, 3:8, _:8, 1:32, 1:32 >>} = gen_tcp:recv(Socket, 13, 6000),
+	ok.
+
+reject_invalid_pseudo_header_protocol_crlf(Config) ->
+	doc("An extended CONNECT request with an invalid :protocol component "
+		"must be rejected with a PROTOCOL_ERROR stream error. "
+		"(draft-01 4, RFC7540 8.1.2.6)"),
+	%% Connect to server and confirm that SETTINGS_ENABLE_CONNECT_PROTOCOL = 1.
+	{ok, Socket, Settings} = do_handshake(Config),
+	#{enable_connect_protocol := true} = Settings,
+	%% Send an extended CONNECT request with an invalid :protocol pseudo-header.
+	{ReqHeadersBlock, _} = cow_hpack:encode([
+		{<<":method">>, <<"CONNECT">>},
+		{<<":protocol">>, <<"websocket\r\n">>},
+		{<<":scheme">>, <<"http">>},
+		{<<":path">>, <<"/ws">>},
+		{<<":authority">>, <<"localhost">>}, %% @todo Correct port number.
+		{<<"sec-websocket-version">>, <<"13">>},
+		{<<"origin">>, <<"http://localhost">>}
+	]),
+	ok = gen_tcp:send(Socket, cow_http2:headers(1, nofin, ReqHeadersBlock)),
+	%% Receive a PROTOCOL_ERROR stream error.
+	{ok, << _:24, 3:8, _:8, 1:32, 1:32 >>} = gen_tcp:recv(Socket, 13, 6000),
+	ok.
+
+reject_invalid_pseudo_header_protocol_nul(Config) ->
+	doc("An extended CONNECT request with an invalid :protocol component "
+		"must be rejected with a PROTOCOL_ERROR stream error. "
+		"(draft-01 4, RFC7540 8.1.2.6)"),
+	%% Connect to server and confirm that SETTINGS_ENABLE_CONNECT_PROTOCOL = 1.
+	{ok, Socket, Settings} = do_handshake(Config),
+	#{enable_connect_protocol := true} = Settings,
+	%% Send an extended CONNECT request with an invalid :protocol pseudo-header.
+	{ReqHeadersBlock, _} = cow_hpack:encode([
+		{<<":method">>, <<"CONNECT">>},
+		{<<":protocol">>, <<"websocket\0">>},
+		{<<":scheme">>, <<"http">>},
+		{<<":path">>, <<"/ws">>},
+		{<<":authority">>, <<"localhost">>}, %% @todo Correct port number.
+		{<<"sec-websocket-version">>, <<"13">>},
+		{<<"origin">>, <<"http://localhost">>}
+	]),
+	ok = gen_tcp:send(Socket, cow_http2:headers(1, nofin, ReqHeadersBlock)),
+	%% Receive a PROTOCOL_ERROR stream error.
+	{ok, << _:24, 3:8, _:8, 1:32, 1:32 >>} = gen_tcp:recv(Socket, 13, 6000),
 	ok.
 
 reject_missing_pseudo_header_scheme(Config) ->
