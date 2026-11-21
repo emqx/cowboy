@@ -26,12 +26,13 @@
 all() ->
 	[
 		{group, ws},
+		{group, ws_h2_options},
 		{group, ws_linger},
 		{group, ws_hibernate},
 		{group, ws_linger_hibernate}
 	].
 
-%% @todo Test against HTTP/2 too.
+%% The HTTP/2 group covers the runtime options.
 groups() ->
 	AllTests = ct_helper:all(?MODULE),
 	LingerTests = [
@@ -41,11 +42,17 @@ groups() ->
 	],
 	[
 		{ws, [parallel], AllTests -- LingerTests},
+		{ws_h2_options, [parallel], [websocket_set_options_idle_timeout, websocket_set_options_max_frame_size]},
 		{ws_linger, [parallel], AllTests},
 		{ws_hibernate, [parallel], AllTests -- LingerTests},
 		{ws_linger_hibernate, [parallel], AllTests}
 	].
 
+init_per_group(Name=ws_h2_options, Config) ->
+	cowboy_test:init_http2(Name, #{
+		enable_connect_protocol => true,
+		env => #{dispatch => init_dispatch(ws)}
+	}, Config);
 init_per_group(Name, Config) ->
 	cowboy_test:init_http(Name, #{
 		env => #{dispatch => init_dispatch(Name)}
@@ -303,18 +310,7 @@ websocket_deflate_ignore_if_not_negotiated(Config) ->
 websocket_set_options_idle_timeout(Config) ->
 	doc("The idle_timeout option can be modified using the "
 		"command {set_options, Opts} at runtime."),
-	ConnPid = gun_open(Config),
-	StreamRef = gun:ws_upgrade(ConnPid, "/set_options"),
-	receive
-		{gun_upgrade, ConnPid, StreamRef, [<<"websocket">>], _} ->
-			ok;
-		{gun_response, ConnPid, _, _, Status, Headers} ->
-			exit({ws_upgrade_failed, Status, Headers});
-		{gun_error, ConnPid, StreamRef, Reason} ->
-			exit({ws_upgrade_failed, Reason})
-	after 1000 ->
-		error(timeout)
-	end,
+	{ConnPid, StreamRef} = do_open_options_ws(Config),
 	%% We don't send anything for a short while and confirm
 	%% that idle_timeout does not trigger.
 	{error, timeout} = gun:await(ConnPid, StreamRef, 2000),
@@ -330,24 +326,13 @@ websocket_set_options_idle_timeout(Config) ->
 				error(timeout)
 			end;
 		http2 ->
-			ok
+			{ws, {close, 1000, <<>>}} = gun:await(ConnPid, StreamRef, 2000)
 	end.
 
 websocket_set_options_max_frame_size(Config) ->
 	doc("The max_frame_size option can be modified using the "
 		"command {set_options, Opts} at runtime."),
-	ConnPid = gun_open(Config),
-	StreamRef = gun:ws_upgrade(ConnPid, "/set_options"),
-	receive
-		{gun_upgrade, ConnPid, StreamRef, [<<"websocket">>], _} ->
-			ok;
-		{gun_response, ConnPid, _, _, Status, Headers} ->
-			exit({ws_upgrade_failed, Status, Headers});
-		{gun_error, ConnPid, StreamRef, Reason} ->
-			exit({ws_upgrade_failed, Reason})
-	after 1000 ->
-		error(timeout)
-	end,
+	{ConnPid, StreamRef} = do_open_options_ws(Config),
 	%% We first send a 1MB frame to confirm that yes, we can
 	%% send a frame that large. The default max_frame_size is infinity.
 	gun:ws_send(ConnPid, StreamRef, {binary, <<0:8000000>>}),
@@ -370,8 +355,20 @@ websocket_set_options_max_frame_size(Config) ->
 				error(timeout)
 			end;
 		http2 ->
-			ok
+			{ws, {close, 1009, <<>>}} = gun:await(ConnPid, StreamRef, 2000)
 	end.
+
+do_open_options_ws(Config) ->
+	ConnPid = case config(protocol, Config) of
+		http -> gun_open(Config);
+		http2 ->
+			Pid = cowboy_test:gun_open(Config, #{http2_opts => #{notify_settings_changed => true}}),
+			{notify, settings_changed, #{enable_connect_protocol := true}} = gun:await(Pid, undefined),
+			Pid
+	end,
+	StreamRef = gun:ws_upgrade(ConnPid, "/set_options"),
+	{upgrade, [<<"websocket">>], _} = gun:await(ConnPid, StreamRef),
+	{ConnPid, StreamRef}.
 
 websocket_shutdown_reason(Config) ->
 	doc("The command {shutdown_reason, any()} can be used to "
