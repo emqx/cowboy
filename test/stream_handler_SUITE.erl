@@ -545,12 +545,14 @@ do_terminate_on_switch_protocol(Config) ->
 	ConnPid = gun_open(Config),
 	Ref = gun:get(ConnPid, "/long_polling", [
 		{<<"accept-encoding">>, <<"gzip">>},
+		{<<"connection">>, <<"upgrade">>},
+		{<<"upgrade">>, <<"shsp">>},
 		{<<"x-test-case">>, <<"terminate_on_switch_protocol">>},
 		{<<"x-test-pid">>, pid_to_list(Self)}
 	]),
 	%% Confirm init/3 is called and receive the response.
 	Pid = receive {Self, P, init, _, _, _} -> P after 1000 -> error(timeout) end,
-	{inform, 101, _} = gun:await(ConnPid, Ref),
+	{upgrade, [<<"shsp">>], _} = gun:await(ConnPid, Ref),
 	%% Confirm terminate/3 is called.
 	receive {Self, Pid, terminate, _, _, _} -> ok after 1000 -> error(timeout) end,
 	%% Confirm takeover/7 is called.

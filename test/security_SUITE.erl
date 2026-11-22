@@ -64,6 +64,10 @@ init_per_suite(Config) ->
 end_per_suite(Config) ->
 	ct_helper:delete_static_dir(config(priv_dir, Config) ++ "/static").
 
+init_per_group(Name, Config) when Name =:= h2; Name =:= h2c;
+		Name =:= h2_compress; Name =:= h2c_compress ->
+	cowboy_test:init_common_groups(Name, Config, ?MODULE,
+		#{max_concurrent_streams => infinity});
 init_per_group(Name, Config) ->
 	cowboy_test:init_common_groups(Name, Config, ?MODULE).
 

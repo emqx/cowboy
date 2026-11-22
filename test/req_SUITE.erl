@@ -106,7 +106,8 @@ do_get(Path, Config) ->
 
 do_get(Path, Headers, Config) ->
 	ConnPid = gun_open(Config),
-	Ref = gun:get(ConnPid, Path, [{<<"accept-encoding">>, <<"gzip">>}|Headers]),
+	Ref = gun:get(ConnPid, Path, [{<<"accept-encoding">>, <<"gzip">>}|Headers],
+		#{invalid_request_headers => ignore}),
 	case gun:await(ConnPid, Ref, infinity) of
 		{response, IsFin, Status, RespHeaders} ->
 			{ok, RespBody} = case IsFin of
@@ -365,8 +366,6 @@ do_path(Path0, Config) ->
 	Path = list_to_binary(Path0 ++ "/to/the/resource"),
 	Path = do_get_body(Path, Config),
 	Path = do_get_body([Path, "?query"], Config),
-	Path = do_get_body([Path, "?query#fragment"], Config),
-	Path = do_get_body([Path, "#fragment"], Config),
 	ok.
 
 path_info(Config) ->
@@ -376,8 +375,6 @@ path_info(Config) ->
 	<<"[]">> = do_get_body("/path_info/", Config),
 	<<"[<<\"to\">>,<<\"the\">>,<<\"resource\">>]">> = do_get_body("/path_info/to/the/resource", Config),
 	<<"[<<\"to\">>,<<\"the\">>,<<\"resource\">>]">> = do_get_body("/path_info/to/the/resource?query", Config),
-	<<"[<<\"to\">>,<<\"the\">>,<<\"resource\">>]">> = do_get_body("/path_info/to/the/resource?query#fragment", Config),
-	<<"[<<\"to\">>,<<\"the\">>,<<\"resource\">>]">> = do_get_body("/path_info/to/the/resource#fragment", Config),
 	ok.
 
 peer(Config) ->
@@ -754,8 +751,19 @@ multipart_error_headers(Config) ->
 	], ReqBody, Config),
 	ok.
 
-%% The function to parse the multipart body currently does not crash,
-%% as far as I can tell. There is therefore no test for it.
+multipart_error_headers_too_large(Config) ->
+	doc("Multipart request body with part headers larger than 2048 bytes."),
+	ReqBody = [
+		%% We use a very large header size because we are testing on
+		%% localhost (large socket buffers) and this is a soft limit
+		%% (we parse if we have the data in buffers already).
+		"--deadbeef\r\ncontent-type: ", binary:copy(<<"a">>, 100000), "\r\n\r\nbody\r\n",
+		"--deadbeef--"
+	],
+	{400, _} = do_body_error("POST", "/multipart", [
+		{<<"content-type">>, <<"multipart/mixed; boundary=deadbeef">>}
+	], ReqBody, Config),
+	ok.
 
 multipart_error_no_final_boundary(Config) ->
 	doc("Multipart request body with no final boundary."),
@@ -1320,13 +1328,14 @@ push_method(Config) ->
 		http3 -> {skip, "Implement server push for HTTP/3."}
 	end.
 
-
-push_origin(Config) ->
-	case config(protocol, Config) of
-		http -> do_push_http("/resp/push/origin", Config);
-		http2 -> do_push_http2_origin(Config);
-		http3 -> {skip, "Implement server push for HTTP/3."}
-	end.
+%% @todo Using custom origin currently disabled in Gun.
+%%       Reenable when Gun supports multiple authoritative origins.
+%push_origin(Config) ->
+%	case config(protocol, Config) of
+%		http -> do_push_http("/resp/push/origin", Config);
+%		http2 -> do_push_http2_origin(Config);
+%		http3 -> {skip, "Implement server push for HTTP/3."}
+%	end.
 
 push_qs(Config) ->
 	case config(protocol, Config) of

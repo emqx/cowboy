@@ -217,9 +217,9 @@ reject_unknown_pseudo_header_protocol(Config) ->
 	ok.
 
 reject_invalid_pseudo_header_protocol(Config) ->
-	doc("An extended CONNECT request with an invalid protocol "
-		"component must be rejected with a 501 Not Implemented "
-		"response. (RFC9220, RFC8441 4)"),
+	doc("An extended CONNECT request with an invalid :protocol component "
+		"must be rejected with a H3_MESSAGE_ERROR stream error. "
+		"(RFC9220, RFC9114 4.3.1, RFC9114 4.1.2)"),
 	%% Connect to server and confirm that SETTINGS_ENABLE_CONNECT_PROTOCOL = 1.
 	#{conn := Conn, settings := Settings} = rfc9114_SUITE:do_connect(Config),
 	#{enable_connect_protocol := true} = Settings,
@@ -239,8 +239,62 @@ reject_invalid_pseudo_header_protocol(Config) ->
 		cow_http3:encode_int(iolist_size(EncodedRequest)),
 		EncodedRequest
 	]),
-	%% The stream should have been rejected with a 501 Not Implemented.
-	#{headers := #{<<":status">> := <<"501">>}} = rfc9114_SUITE:do_receive_response(StreamRef),
+	%% The stream should have been aborted.
+	#{reason := h3_message_error} = rfc9114_SUITE:do_wait_stream_aborted(StreamRef),
+	ok.
+
+reject_invalid_pseudo_header_protocol_crlf(Config) ->
+	doc("An extended CONNECT request with an invalid :protocol component "
+		"must be rejected with a H3_MESSAGE_ERROR stream error. "
+		"(RFC9220, RFC9114 4.3.1, RFC9114 4.1.2)"),
+	%% Connect to server and confirm that SETTINGS_ENABLE_CONNECT_PROTOCOL = 1.
+	#{conn := Conn, settings := Settings} = rfc9114_SUITE:do_connect(Config),
+	#{enable_connect_protocol := true} = Settings,
+	%% Send an extended CONNECT request with an invalid :protocol pseudo-header.
+	{ok, StreamRef} = quicer:start_stream(Conn, #{}),
+	{ok, EncodedRequest, _EncData, _EncSt} = cow_qpack:encode_field_section([
+		{<<":method">>, <<"CONNECT">>},
+		{<<":protocol">>, <<"websocket\r\n">>},
+		{<<":scheme">>, <<"https">>},
+		{<<":path">>, <<"/ws">>},
+		{<<":authority">>, <<"localhost">>}, %% @todo Correct port number.
+		{<<"sec-websocket-version">>, <<"13">>},
+		{<<"origin">>, <<"http://localhost">>}
+	], 0, cow_qpack:init(encoder)),
+	{ok, _} = quicer:send(StreamRef, [
+		<<1>>, %% HEADERS frame.
+		cow_http3:encode_int(iolist_size(EncodedRequest)),
+		EncodedRequest
+	]),
+	%% The stream should have been aborted.
+	#{reason := h3_message_error} = rfc9114_SUITE:do_wait_stream_aborted(StreamRef),
+	ok.
+
+reject_invalid_pseudo_header_protocol_nul(Config) ->
+	doc("An extended CONNECT request with an invalid :protocol component "
+		"must be rejected with a H3_MESSAGE_ERROR stream error. "
+		"(RFC9220, RFC9114 4.3.1, RFC9114 4.1.2)"),
+	%% Connect to server and confirm that SETTINGS_ENABLE_CONNECT_PROTOCOL = 1.
+	#{conn := Conn, settings := Settings} = rfc9114_SUITE:do_connect(Config),
+	#{enable_connect_protocol := true} = Settings,
+	%% Send an extended CONNECT request with an invalid :protocol pseudo-header.
+	{ok, StreamRef} = quicer:start_stream(Conn, #{}),
+	{ok, EncodedRequest, _EncData, _EncSt} = cow_qpack:encode_field_section([
+		{<<":method">>, <<"CONNECT">>},
+		{<<":protocol">>, <<"websocket\0">>},
+		{<<":scheme">>, <<"https">>},
+		{<<":path">>, <<"/ws">>},
+		{<<":authority">>, <<"localhost">>}, %% @todo Correct port number.
+		{<<"sec-websocket-version">>, <<"13">>},
+		{<<"origin">>, <<"http://localhost">>}
+	], 0, cow_qpack:init(encoder)),
+	{ok, _} = quicer:send(StreamRef, [
+		<<1>>, %% HEADERS frame.
+		cow_http3:encode_int(iolist_size(EncodedRequest)),
+		EncodedRequest
+	]),
+	%% The stream should have been aborted.
+	#{reason := h3_message_error} = rfc9114_SUITE:do_wait_stream_aborted(StreamRef),
 	ok.
 
 reject_missing_pseudo_header_scheme(Config) ->

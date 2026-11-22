@@ -26,12 +26,13 @@
 all() ->
 	[
 		{group, ws},
+		{group, ws_h2_options},
 		{group, ws_linger},
 		{group, ws_hibernate},
 		{group, ws_linger_hibernate}
 	].
 
-%% @todo Test against HTTP/2 too.
+%% The HTTP/2 group covers the runtime options.
 groups() ->
 	AllTests = ct_helper:all(?MODULE),
 	LingerTests = [
@@ -41,11 +42,17 @@ groups() ->
 	],
 	[
 		{ws, [parallel], AllTests -- LingerTests},
+		{ws_h2_options, [parallel], [websocket_set_options_idle_timeout, websocket_set_options_max_frame_size]},
 		{ws_linger, [parallel], AllTests},
 		{ws_hibernate, [parallel], AllTests -- LingerTests},
 		{ws_linger_hibernate, [parallel], AllTests}
 	].
 
+init_per_group(Name=ws_h2_options, Config) ->
+	cowboy_test:init_http2(Name, #{
+		enable_connect_protocol => true,
+		env => #{dispatch => init_dispatch(ws)}
+	}, Config);
 init_per_group(Name, Config) ->
 	cowboy_test:init_http(Name, #{
 		env => #{dispatch => init_dispatch(Name)}
@@ -209,7 +216,10 @@ do_close_frame(Config, Path) ->
 	{ok, ConnPid, StreamRef} = gun_open_ws(Config, Path, [close]),
 	ensure_handle_is_called(ConnPid, StreamRef, Path),
 	{ok, close} = receive_ws(ConnPid, StreamRef),
-	gun_down(ConnPid).
+	case config(protocol, Config) of
+		http -> gun_down(ConnPid);
+		http2 -> ok
+	end.
 
 websocket_init_many_frames_then_close_frame(Config) ->
 	doc("Multiple frames are received followed by a close frame "
@@ -236,7 +246,10 @@ do_many_frames_then_close_frame(Config, Path) ->
 	{ok, {text, <<"One frame!">>}} = receive_ws(ConnPid, StreamRef),
 	{ok, {binary, <<"Two frames!">>}} = receive_ws(ConnPid, StreamRef),
 	{ok, close} = receive_ws(ConnPid, StreamRef),
-	gun_down(ConnPid).
+	case config(protocol, Config) of
+		http -> gun_down(ConnPid);
+		http2 -> ok
+	end.
 
 websocket_init_trap_exit_false(Config) ->
 	doc("The trap_exit process flag must be set back to false before "
@@ -297,46 +310,29 @@ websocket_deflate_ignore_if_not_negotiated(Config) ->
 websocket_set_options_idle_timeout(Config) ->
 	doc("The idle_timeout option can be modified using the "
 		"command {set_options, Opts} at runtime."),
-	ConnPid = gun_open(Config),
-	StreamRef = gun:ws_upgrade(ConnPid, "/set_options"),
-	receive
-		{gun_upgrade, ConnPid, StreamRef, [<<"websocket">>], _} ->
-			ok;
-		{gun_response, ConnPid, _, _, Status, Headers} ->
-			exit({ws_upgrade_failed, Status, Headers});
-		{gun_error, ConnPid, StreamRef, Reason} ->
-			exit({ws_upgrade_failed, Reason})
-	after 1000 ->
-		error(timeout)
-	end,
+	{ConnPid, StreamRef} = do_open_options_ws(Config),
 	%% We don't send anything for a short while and confirm
 	%% that idle_timeout does not trigger.
 	{error, timeout} = gun:await(ConnPid, StreamRef, 2000),
 	%% Trigger the change in idle_timeout and confirm that
 	%% the connection gets closed soon after.
 	gun:ws_send(ConnPid, StreamRef, {text, <<"idle_timeout_short">>}),
-	receive
-		{gun_down, ConnPid, _, _, _} ->
-			ok
-	after 2000 ->
-		error(timeout)
+	case config(protocol, Config) of
+		http ->
+			receive
+				{gun_down, ConnPid, _, _, _} ->
+					ok
+			after 2000 ->
+				error(timeout)
+			end;
+		http2 ->
+			{ws, {close, 1000, <<>>}} = gun:await(ConnPid, StreamRef, 2000)
 	end.
 
 websocket_set_options_max_frame_size(Config) ->
 	doc("The max_frame_size option can be modified using the "
 		"command {set_options, Opts} at runtime."),
-	ConnPid = gun_open(Config),
-	StreamRef = gun:ws_upgrade(ConnPid, "/set_options"),
-	receive
-		{gun_upgrade, ConnPid, StreamRef, [<<"websocket">>], _} ->
-			ok;
-		{gun_response, ConnPid, _, _, Status, Headers} ->
-			exit({ws_upgrade_failed, Status, Headers});
-		{gun_error, ConnPid, StreamRef, Reason} ->
-			exit({ws_upgrade_failed, Reason})
-	after 1000 ->
-		error(timeout)
-	end,
+	{ConnPid, StreamRef} = do_open_options_ws(Config),
 	%% We first send a 1MB frame to confirm that yes, we can
 	%% send a frame that large. The default max_frame_size is infinity.
 	gun:ws_send(ConnPid, StreamRef, {binary, <<0:8000000>>}),
@@ -350,12 +346,29 @@ websocket_set_options_max_frame_size(Config) ->
 	%% Confirm that sending frames larger than 1000 bytes
 	%% results in the closing of the connection.
 	gun:ws_send(ConnPid, StreamRef, {binary, <<0:8008>>}),
-	receive
-		{gun_down, ConnPid, _, _, _} ->
-			ok
-	after 2000 ->
-		error(timeout)
+	case config(protocol, Config) of
+		http ->
+			receive
+				{gun_down, ConnPid, _, _, _} ->
+					ok
+			after 2000 ->
+				error(timeout)
+			end;
+		http2 ->
+			{ws, {close, 1009, <<>>}} = gun:await(ConnPid, StreamRef, 2000)
 	end.
+
+do_open_options_ws(Config) ->
+	ConnPid = case config(protocol, Config) of
+		http -> gun_open(Config);
+		http2 ->
+			Pid = cowboy_test:gun_open(Config, #{http2_opts => #{notify_settings_changed => true}}),
+			{notify, settings_changed, #{enable_connect_protocol := true}} = gun:await(Pid, undefined),
+			Pid
+	end,
+	StreamRef = gun:ws_upgrade(ConnPid, "/set_options"),
+	{upgrade, [<<"websocket">>], _} = gun:await(ConnPid, StreamRef),
+	{ConnPid, StreamRef}.
 
 websocket_shutdown_reason(Config) ->
 	doc("The command {shutdown_reason, any()} can be used to "
